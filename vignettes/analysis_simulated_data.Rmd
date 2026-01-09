@@ -1,0 +1,284 @@
+---
+title: "Analysis of simulated data"
+author: "Yasumasa Kimura"
+date: "`r Sys.Date()`"
+output: html_document
+params:
+   dir_in: "../input/simulated_data" # Input directory
+   dir_out: "../output/simulated_data" # Output directory
+   sim_id: "mi_100_100" # Simulation data ID
+   data_type: "count" # Simulation data type
+   s_y: "0.01" # Dispersion parameter used for generating simulation data
+   col_target: "y" # Target column name in input file
+   #model_dual: "dual_logistic4_nb" # Stan model for single-drug part in ../stan/
+   model_dual: NULL # Stan model for single-drug part in ../stan/
+   model_bayesyc: "model_subtypes/bayesyc-c_nb" # Stan model for combination part in ../stan/
+   #use_zeros: FALSE # Not to include zero-dose values in combination part
+   use_zeros: TRUE # To include zero-dose values using small positive values
+   lb_log10_C: -10 # Lower bound of prior of log10(C)
+   ub_log10_C: 6 # Upper bound of prior of log10(C)
+   n_chains: 4 # Number of chains in MCMC sampling
+   n_cores: 4 # Number of cores used per chain in MCMC sampling
+   n_iter: 4000 # Number of iterations for both warmup and sampling phases in MCMC
+   n_retry: 0 # Number of retry attempts for MCMC sampling if it fails
+   l_pred: 20 # Number of data points for prediction
+   thre_tc: 50 # Minimum T/C % to check
+   thre_rhat: 1.1 # All Rhat values are required to be lower than this value for successful fit
+   refresh: 0 # Print update every this iterations (0: No update)
+   base_value: NULL # Use this value as a fixed base value
+   n_analysis: -1 # Number of combinations analyzed (-1: All)
+   cmdstanr_tmp: "./tmp"  # Directory for intermediate CSV files used by CmdStanR
+   log_lik: FALSE
+   save_rds: FALSE
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = FALSE)
+
+library(ggplot2)
+library(plotly)
+library(dplyr)
+
+dir.create(params$dir_out, showWarnings=F, recursive=F, mode="0750")
+if(!is.null(params$cmdstanr_tmp)) dir.create(params$cmdstanr_tmp, showWarnings=F, recursive=F, mode="0750")
+
+```
+
+## Load data
+Loads the simulated TSV into df_sim, optionally subsets analyses according to params$n_analysis, and constructs a processed whole_input Manual_Input_Double object for modeling. Writes the run parameters to a CSV file for record-keeping.
+
+```{r load_data}
+
+# Read input TSV 
+df_sim <- read.csv(file.path(params$dir_in, paste0("simulated_",params$data_type,"_data.double.",params$s_y,".",params$sim_id,".tsv")), sep="\t", header=T, check.names=F, stringsAsFactors=F)
+df_sim$specimen <- "ND"
+
+# Print parameters
+model <- basename(params$model_bayesyc)
+out_params_ <- file.path(params$dir_out, paste0("params.simulated_double.",params$data_type,".",params$s_y,".",params$sim_id,".",model,".csv"))
+sink(out_params_)
+for(p in names(params)){
+  cat(p,"\t",params[[p]],"\n",sep="")
+}
+sink()
+
+# Narrow down data (mainly for test)
+if(params$n_analysis > 0){
+  v_combination <- unique(df_sim$combination_name)
+  if(length(v_combination) < params$n_analysis){
+    n_analysis <- length(v_combination)
+  }else{
+    n_analysis <- params$n_analysis
+  }
+  df_sim <- df_sim %>% dplyr::filter(combination_name %in% v_combination[1:n_analysis])
+}
+
+# Create whole input object 
+if(is.null(params$base_value)){
+  whole_input <- bayesyc::Manual_Input_Double$new(params, df_sim)
+}else{
+  df_sim_excl_0 <- df_sim %>% dplyr::filter(conc_1 != 0 & conc_2 != 0)
+  whole_input <- bayesyc::Manual_Input_Double$new(params, df_sim_excl_0, base_value=params$base_value)
+}
+whole_input$process_input_data("target", params)
+
+```
+
+## Perform BayeSyC
+Compiles the specified Stan models via CmdStanR, instantiates Whole_Output_BayeSyC, and runs the BayeSyC fitting workflow (fitting, processing, and summary statistic generation) and stores aggregated summary statistics from the model output (whole_output$df_stats_bayesyc) in df_stats.
+
+```{r main, warning=FALSE, message=FALSE, results='hide'}
+
+#------------------------------
+# CmdStanR
+cat(params$model_bayesyc,"\n")
+stan_model_dual <- NULL
+if(!is.null(params$model_dual)){
+  if(params$model_dual != "NULL"){
+    stan_model_dual <- cmdstanr::cmdstan_model(paste0("../stan/",params$model_dual,".stan"))
+  }
+}
+stan_model_bayesyc <- cmdstanr::cmdstan_model(paste0("../stan/",params$model_bayesyc,".stan"))
+whole_output <- bayesyc::Whole_Output_BayeSyC$new(whole_input, stan_model_dual, stan_model_bayesyc, params, run_all=FALSE)
+# Part by part
+whole_output$perform_fitting_bayesyc()
+whole_output$process_fit_bayesyc()
+whole_output$make_stats_bayesyc()
+# Dataframe for stats
+df_stats <- whole_output$df_stats_bayesyc
+
+```
+
+## Log likelihood
+When params$log_lik is TRUE, computes log-likelihood summaries, and appends them to df_stats. Skips execution entirely if params$log_lik is FALSE (default).
+
+```{r log_lik, warning=FALSE, class.output="bg-danger", size="Large"}
+
+if(params$log_lik){
+  
+  v_rmse <- NULL
+  v_mean_loglik <- NULL
+  v_sum_loglik <- NULL
+  
+  for(p in seq(whole_output$ls_data)){
+    # summary
+    mx_summary <- whole_output$ls_fit_bayesyc[[p]][[1]]$fit_bayesyc$fit_summary
+    num_data_points <- length(grep("log_lik", rownames(mx_summary), value=TRUE))
+    v_loglik_names <- paste0("log_lik[", 1:num_data_points,"]")
+    # log likelihood
+    v_loglik <- mx_summary[v_loglik_names, "mean"]
+    v_mean_loglik <- c(v_mean_loglik, mean(v_loglik))
+    v_sum_loglik <- c(v_sum_loglik, sum(v_loglik))
+  }
+  
+  df_stats$mean_LogLik <- v_mean_loglik
+  df_stats$sum_LogLik <- v_sum_loglik
+  
+}
+
+```
+
+## Output stats CSV
+Writes the assembled df_stats dataframe to a CSV file.
+
+```{r out_stats, warning=FALSE}
+
+out_stats_ <- file.path(params$dir_out, paste0("stats.simulated_double.",params$data_type,".",params$s_y,".",params$sim_id,".",model,".csv"))
+write.table(df_stats, file=out_stats_, sep=",", row.names=F, col.names=T, quote=F)
+
+```
+
+## Time taken for sampling
+Extracts warmup and sampling durations from CmdStan fit objects (including dual model time when present), assembles a df_time_bayesyc timing table, and writes it to a CSV.
+
+```{r out_time, warning=FALSE}
+
+# Time taken for sampling
+v_model <- c()
+v_analysis <- c()
+v_compound_1 <- c()
+v_compound_2 <- c()
+v_time_warmup <- c()
+v_time_sampling <- c()
+for(p in seq(whole_output$ls_fit_bayesyc)){
+
+  analysis <- whole_output$ls_data[[p]]$analysis
+  v_comp <- whole_output$ls_res_bayesyc[[p]][[1]]$comp
+  
+  if(!is.null(whole_output$ls_fit_bayesyc[[p]][[1]]$fit_bayesyc$fit)){
+    ls_time_m <- whole_output$ls_fit_bayesyc[[p]][[1]]$fit_bayesyc$fit$time()
+    time_warmup <- max(ls_time_m$chains$warmup)
+    time_sampling <- max(ls_time_m$chains$sampling)
+
+    if(!is.null(whole_output$ls_fit_bayesyc[[p]][[1]]$fit_dual)){
+      ls_time_d <- whole_output$ls_fit_bayesyc[[p]][[1]]$fit_dual$fit$time()
+      time_warmup <- time_warmup + max(ls_time_d$chains$warmup)
+      time_sampling <- time_sampling + max(ls_time_d$chains$sampling)
+    }
+
+  }else{
+    time_warmup <- NA
+    time_sampling <- NA
+  }
+    
+  # output
+  v_model <- c(v_model, model)
+  v_analysis <- c(v_analysis, analysis)
+  v_compound_1 <- c(v_compound_1, v_comp[1])
+  v_compound_2 <- c(v_compound_2, v_comp[2])
+  v_time_warmup <- c(v_time_warmup, time_warmup)
+  v_time_sampling <- c(v_time_sampling, time_sampling)
+}
+
+df_time_bayesyc <- data.frame(model=v_model, 
+                            Analysis=v_analysis, Compund_1=v_compound_1, Compound_2=v_compound_2,
+                            Time_warmup=v_time_warmup, Time_sampling=v_time_sampling)
+out_time_ <- file.path(params$dir_out, paste0("time.simulated_double.",params$data_type,".",params$s_y,".",params$sim_id,".",model,".csv"))
+write.table(df_time_bayesyc, file=out_time_, sep=",", row.names=F, col.names=T, quote=F)
+
+```
+
+## Dose response contour of estimated values
+### Treatment vs Control (%) in median
+Builds filled contour plots of predicted median T/C values across the concentration grid for each successful fit, arranges the plots into a PDF.
+
+```{r geom_contour_pred, eval=TRUE}
+
+#------------------------------
+# Heatmap, contour and 3D surface plot
+ls_plots_pred <- NULL
+for(p in seq(whole_output$ls_fit_bayesyc)){
+  # Show input file info
+  if(!whole_output$ls_res_bayesyc[[p]][[1]]$fit_bayesyc$success_fit) next
+  
+  predictions <- whole_output$ls_res_bayesyc[[p]][[1]]$fit_bayesyc$predictions
+  ls_in <- whole_output$ls_fit_bayesyc[[p]][[1]]$fit_bayesyc$input
+  
+  comp1 <- whole_output$ls_res_bayesyc[[p]][[1]]$comp[1]
+  comp2 <- whole_output$ls_res_bayesyc[[p]][[1]]$comp[2]
+  
+  df_contour <- expand.grid(x=ls_in$v_x1_new, y=ls_in$v_x2_new)
+  df_contour$z <- as.vector(t(predictions$mx_surface_median_tc))
+  
+  g1 <- ggplot(df_contour, aes(x, y, z=z))
+  g1 <- g1 + theme_bw(base_size=8)
+  g1 <- g1 + geom_contour_filled()
+  g1 <- g1 + scale_fill_brewer(palette="Spectral", direction=-1)
+  g1 <- g1 + geom_contour(colour="black", size=0.2)
+  g1 <- g1 + scale_x_continuous(expand=c(0,0), transform="log10")
+  g1 <- g1 + scale_y_continuous(expand=c(0,0), transform="log10")
+  g1 <- g1 + theme(legend.position = "none")
+  g1 <- g1 + xlab(paste(comp1, "[uM]")) + ylab(paste(comp2, "[uM]")) + ggtitle(paste(p, model))
+  g1 <- g1 + coord_fixed()
+
+  ls_plots_pred <- c(ls_plots_pred, list(g1))
+}
+
+# Save in PDF
+grob <- gridExtra::marrangeGrob(ls_plots_pred, nrow=3, ncol=4)
+out_pdf_ <- file.path(params$dir_out, paste0("plot_contour.simulated_double.",params$data_type,".",params$s_y,".",params$sim_id,".",model,".pdf"))
+ggsave(out_pdf_, grob, device="pdf", width = 297, height = 210, units = "mm")
+
+```
+
+## Dose response contour of observed values
+### Treatment vs Control (%) in median
+Aggregates observed responses by concentration grid, creates filled contour plots of the observed mean T/C values, and saves the arranged plots to a PDF (note: chunk is marked eval=FALSE by default). 
+
+```{r geom_contour_observation, eval=FALSE}
+
+ls_plots_obs <- NULL
+
+#------------------------------
+# Heatmap, contour and 3D surface plot
+for(p in seq(whole_output$ls_res_bayesyc)){
+
+  # Show input file info
+  if(!whole_output$ls_res_bayesyc[[p]][[1]]$fit_bayesyc$success_fit) next
+
+  df_x_matrix <- whole_output$ls_res_bayesyc[[p]][[1]]$df_x_matrix
+  comp1 <- df_x_matrix$compound_1
+  comp2 <- df_x_matrix$compound_2
+  df_contour <- data.frame(x=df_x_matrix$conc_1, y=df_x_matrix$conc_2, z=df_x_matrix$y) %>% group_by(x,y) %>% summarise(mean=mean(z), .groups="drop")
+
+  g1 <- ggplot(df_contour, aes(x, y, z=mean))
+  g1 <- g1 + theme_bw(base_size=8)
+  g1 <- g1 + geom_contour_filled()
+  g1 <- g1 + scale_fill_brewer(palette="Spectral", direction=-1)
+  g1 <- g1 + geom_contour(colour="black", size=0.2)
+  g1 <- g1 + scale_x_continuous(expand=c(0,0), transform="log10")
+  g1 <- g1 + scale_y_continuous(expand=c(0,0), transform="log10")
+  g1 <- g1 + theme(legend.position = "none")
+  g1 <- g1 + xlab(paste(comp1, "[uM]")) + ylab(paste(comp2, "[uM]")) + ggtitle(paste(p))
+  g1 <- g1 + coord_fixed()
+
+  ls_plots_obs <- c(ls_plots_obs, list(g1))
+}
+
+# Save in PDF
+grob <- gridExtra::marrangeGrob(ls_plots_obs, nrow=3, ncol=4)
+out_pdf_ <- file.path(params$dir_out, paste0("observed_contour.simulated_double.",params$data_type,".",params$s_y,".",params$sim_id,".pdf"))
+ggsave(out_pdf_, grob, device="pdf", width = 297, height = 210, units = "mm")
+
+```

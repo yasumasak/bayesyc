@@ -1,0 +1,228 @@
+---
+title: "Analysis of O'Neil et al. 2016 data"
+author: "Yasumasa Kimura"
+date: "`r Sys.Date()`"
+output: html_document
+params:
+   dir_in: "../input/ONeil_2016" # Input directory
+   dir_out: "../output/ONeil_2016" # Output directory
+   out_name: "ONeil_2016.94" # Output label
+   combination_idx: 94 # Combination index in ONeil 2016 data
+   cmdstanr_tmp: "./tmp_ONeil_2016.94" # Directory for intermediate CSV files used by CmdStanR
+   col_target: "y" # Target column name in input file
+   # BayeSyC ----
+   model_dual: "NULL" # Stan model for single-drug part in ../stan/
+   #model_bayesyc: "no_HC_LC/bayesyc-i_norm" # Stan model for combination part in ../stan/
+   model_bayesyc: "no_HC_LC/bayesyc-i_gamma" # Stan model for combination part in ../stan/
+   use_zeros: FALSE # Not to include zero-dose values in combination part
+   # SynBa ----
+   #model_dual: "NULL" # Stan model for single-drug part in ../stan/
+   #model_bayesyc: "no_HC_LC/synba_combo" # Stan model for combination part in ../stan/
+   #use_zeros: TRUE # To include zero-dose values using small positive values
+   #-----------
+   lb_log10_C: -10 # Lower bound of prior of log10(C)
+   ub_log10_C: 6 # Upper bound of prior of log10(C)
+   n_chains: 4 # Number of chains in MCMC sampling
+   n_cores: 4 # Number of cores used per chain in MCMC sampling
+   n_iter: 4000 # Number of iterations for both warmup and sampling phases in MCMC
+   n_retry: 2 # Number of retry attempts for MCMC sampling if it fails
+   l_pred: 10 # Number of data points for prediction
+   thre_tc: 50 # Minimum T/C % to check
+   thre_rhat: 1.1 # All Rhat values are required to be lower than this value for successful fit
+   refresh: 0 # Print update every this iterations (0: No update)
+   n_analysis: -1 # Number of cell lines analyzed (-1: All)
+   save_rds: FALSE
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = FALSE)
+
+library(ggplot2)
+library(plotly)
+library(dplyr)
+
+dir.create(params$dir_out, showWarnings=F, recursive=F, mode="0750")
+if(!is.null(params$cmdstanr_tmp)) dir.create(params$cmdstanr_tmp, showWarnings=F, recursive=F, mode="0750")
+
+```
+
+## Load data
+Reads the two TSV files containing the combination and single-drug data into df_double and df_single, respectively.
+
+```{r load_data}
+
+# Read input TSV
+df_double <- read.csv(file.path(params$dir_in,"ONeil_MolCancerTher_2016_15_6_1155-1162.Combination.tsv"), sep="\t", header=T, check.names=F, stringsAsFactors=F)
+df_single <- read.csv(file.path(params$dir_in,"ONeil_MolCancerTher_2016_15_6_1155-1162.Single.tsv"), sep="\t", header=T, check.names=F, stringsAsFactors=F)
+
+# Print parameters
+model <- basename(params$model_bayesyc)
+out_params_ <- paste0(params$dir_out, "/params.synergy.",params$out_name,".",model,".csv")
+sink(out_params_)
+for(p in names(params)){
+  cat(p,"\t",params[[p]],"\n",sep="")
+}
+sink()
+
+```
+
+## Select input data
+Selects a specific drug combination (using params$combination_idx), filters to the chosen cell line for testing, and constructs a Whole_Input_ONeil object from the filtered data. It then calls process_input_data() on the object to prepare data structures needed for downstream modeling.
+
+```{r whole_input}
+
+if(!is.null(params$combination_idx)){
+  # Narrowing down the data
+  v_uniq_combination_name <- unique(df_double$combination_name)
+  combination_name <- v_uniq_combination_name[as.numeric(params$combination_idx)]
+  comp_1 <- unlist(strsplit(combination_name, " & "))[1]
+  comp_2 <- unlist(strsplit(combination_name, " & "))[2]
+  df_double <- df_double %>% dplyr::filter(combination_name == combination_name)
+  df_single <- df_single %>% dplyr::filter(drug_name %in% c(comp_1, comp_2))
+ 
+  # Narrow down data (mainly for test)
+  if(params$n_analysis > 0){
+    v_cell_line <- unique(df_double$cell_line)
+    if(length(v_cell_line) < params$n_analysis){
+      n_analysis <- length(v_cell_line)
+    }else{
+      n_analysis <- params$n_analysis
+    }
+    df_double <- df_double %>% dplyr::filter(cell_line %in% v_cell_line[1:n_analysis])
+    df_single <- df_single %>% dplyr::filter(cell_line %in% v_cell_line[1:n_analysis])
+  }
+}
+
+# Create whole input object
+whole_input <- bayesyc::Whole_Input_ONeil$new(params, df_double, df_single)
+whole_input$process_input_data("target", params)
+
+```
+
+## Perform BayeSyC
+Compiles the requested Stan models with CmdStanR and runs MCMC sampling via the Whole_Output_BayeSyC workflow (fitting, processing, and summary statistic generation) and stores aggregated summary statistics from the model output (whole_output$df_stats_bayesyc) in df_stats.
+
+```{r main, warning=FALSE, message=FALSE, results='hide'}
+
+#------------------------------
+# CmdStanR
+cat(params$model_bayesyc,"\n")
+stan_model_dual <- NULL
+if(!is.null(params$model_dual)){
+  if(params$model_dual != "NULL"){
+    stan_model_dual <- cmdstanr::cmdstan_model(paste0("../stan/",params$model_dual,".stan"))
+  }
+}
+stan_model_bayesyc <- cmdstanr::cmdstan_model(paste0("../stan/",params$model_bayesyc,".stan"))
+whole_output <- bayesyc::Whole_Output_BayeSyC$new(whole_input, stan_model_dual, stan_model_bayesyc, params, run_all=FALSE)
+# Part by part
+whole_output$perform_fitting_bayesyc()
+whole_output$process_fit_bayesyc()
+whole_output$make_stats_bayesyc()
+# Dataframe for stats
+df_stats <- whole_output$df_stats_bayesyc
+
+```
+
+## Calculate Log likelihood, WAIC and LOO
+Computes log-likelihood summaries and information criteria (WAIC and LOO) for each fit, and appends these metrics (with SEs) to df_stats.
+
+```{r log_lik, warning=FALSE, class.output="bg-danger", size="Large"}
+
+v_rmse <- NULL
+v_mean_loglik <- NULL
+v_sum_loglik <- NULL
+v_waic <- NULL
+v_se_waic <- NULL
+v_looic <- NULL
+v_se_looic <- NULL
+
+for(p in seq(whole_output$ls_data)){
+  # summary
+  mx_summary <- whole_output$ls_fit_bayesyc[[p]][[1]]$fit_bayesyc$fit_summary
+  
+  # log likelihood
+  num_data_points <- length(grep("log_lik", rownames(mx_summary), value=TRUE))
+  v_loglik_names <- paste0("log_lik[", 1:num_data_points,"]")
+  v_loglik <- mx_summary[v_loglik_names, "mean"]
+  v_mean_loglik <- c(v_mean_loglik, mean(v_loglik))
+  v_sum_loglik <- c(v_sum_loglik, sum(v_loglik))
+    
+  # WAIC and LOO
+  whole_output$ls_fit_bayesyc[[p]][[1]]$fit_bayesyc$calculate_IC()
+  v_waic <- c(v_waic, whole_output$ls_fit_bayesyc[[p]][[1]]$fit_bayesyc$waic["waic", "Estimate"])
+  v_se_waic <- c(v_se_waic, whole_output$ls_fit_bayesyc[[p]][[1]]$fit_bayesyc$waic["waic", "SE"])
+  v_looic <- c(v_looic, whole_output$ls_fit_bayesyc[[p]][[1]]$fit_bayesyc$looic["looic", "Estimate"])
+  v_se_looic <- c(v_se_looic, whole_output$ls_fit_bayesyc[[p]][[1]]$fit_bayesyc$looic["looic", "SE"])
+}
+
+df_stats$mean_LogLik <- v_mean_loglik
+df_stats$sum_LogLik <- v_sum_loglik
+df_stats$WAIC <- v_waic
+df_stats$SE_WAIC <- v_se_waic
+df_stats$LOO <- v_looic
+df_stats$SE_LOO <- v_se_looic
+
+```
+
+## Output stats CSV
+Writes the assembled df_stats dataframe to a CSV file.
+
+```{r out_stats, warning=FALSE, class.output="bg-danger", size="Large"}
+
+# Output stats in CSV format
+out_stats_bayesyc_ <- paste0(params$dir_out,"/stats.synergy.",params$out_name,".",model,".csv")
+write.table(df_stats, file=out_stats_bayesyc_, sep=",", row.names=F, col.names=T, quote=F)
+
+```
+
+## Dose response heatmap
+### Treatment vs Control (%) in median
+Builds interactive Plotly visualizations (heatmap, contour, or 3D surface) of the median treatment-vs-control (%) response surface for each successful fit.
+
+```{r plotly_heatmap}
+
+tL <- htmltools::tagList()
+
+#------------------------------
+# Heatmap, contour and 3D surface plot
+for(p in seq(whole_output$ls_data)){
+
+  if(!whole_output$ls_res_bayesyc[[p]][[1]]$fit_bayesyc$success_fit) next
+
+  predictions <- whole_output$ls_res_bayesyc[[p]][[1]]$fit_bayesyc$predictions
+  df_x_matrix <- whole_output$ls_res_bayesyc[[p]][[1]]$df_x_matrix
+  ls_in <- whole_output$ls_fit_bayesyc[[p]][[1]]$fit_bayesyc$input
+
+  comp1 <- whole_output$ls_res_bayesyc[[p]][[1]]$comp[1]
+  comp2 <- whole_output$ls_res_bayesyc[[p]][[1]]$comp[2]
+
+  # Chart option buttons
+  chart_types <- list(type = "buttons",
+    buttons = list(
+      list(method = "restyle", args = list("type", "heatmap"), label = "heatmap"),
+      list(method = "restyle", args = list("type", "contour"), label = "Contour"),
+      list(method = "restyle", args = list("type", "surface"), label = "Surface")
+    )
+  )
+
+  # Plotly object
+  fig <- plot_ly(z=predictions$mx_surface_median_tc, x=ls_in$v_x1_new, y=ls_in$v_x2_new,
+                 type="contour", height=400, width=700, colorscale="Jet")
+  fig <- fig %>% layout(
+    title = whole_input$ls_data[[p]]$specimen,
+    xaxis = list(title = paste(comp1, "[μM]"), domain=c(0.3, 1), type="log", exponentformat="none"),
+    yaxis = list(title = paste(comp2, "[μM]"), domain=c(0.1, 1), type="log", exponentformat="none"),
+    updatemenus = list(chart_types),
+    scene = list( xaxis = list(title=paste(comp1, "[μM]"), type="log", exponentformat="none"),
+                  yaxis = list(title=paste(comp2, "[μM]"), type="log", exponentformat="none"),
+                  zaxis = list(title=paste("T/C [%]")) ))
+
+  # Show figure
+  tL[[length(tL) + 1]] <- as_widget(fig)
+}
+tL
+
+```
+

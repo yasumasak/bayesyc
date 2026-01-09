@@ -1,0 +1,772 @@
+---
+title: "Analyze synergy results on ONeil 2016 data"
+author: "Yasumasa Kimura"
+date: "`r Sys.Date()`"
+output: html_document
+params:
+   dir_in: "./input"
+   dir_out: "./output"
+---
+
+```{r setup, include=FALSE}
+library(ggplot2)
+library(grid)
+library(dplyr)
+
+prefix1 <- "figure_04."
+prefix2 <- "figure_05."
+
+setwd(dirname(rstudioapi::getSourceEditorContext()$path))
+
+```
+
+
+# Input ONeil 2016 data
+
+```{r load_ONeil}
+
+dir_input_oneil_ <- "../input/ONeil_2016"
+
+if(!dir.exists(dir_input_oneil_)) stop("Input directory '",dir_input_oneil_,"' does not exist.")
+v_tsv = list.files(dir_input_oneil_, pattern=".tsv$")
+n_plate = length(v_tsv)
+if(n_plate == 0) stop("No input TSV file found.")
+  
+#------------------------------
+# Viability data from TSV file
+df_double <- read.csv(paste0(dir_input_oneil_,"/ONeil_MolCancerTher_2016_15_6_1155-1162.Combination.tsv"), sep="\t", header=T, check.names=F, stringsAsFactors=F)
+df_single <- read.csv(paste0(dir_input_oneil_, "/ONeil_MolCancerTher_2016_15_6_1155-1162.Single.tsv"), sep="\t", header=T, check.names=F, stringsAsFactors=F)
+  
+```
+
+## Mean vs SD of viability
+
+```{r mean_vs_sd_ONeil, eval=FALSE}
+cols_viability_4 <- c("viability1", "viability2", "viability3", "viability4")
+cols_viability_6 = c("viability1", "viability2", "viability3", "viability4", "viability5", "viability6")
+
+df_double[, cols_viability_4] <- sapply(df_double[, cols_viability_4], as.numeric)
+df_single[, cols_viability_6] <- sapply(df_single[, cols_viability_6], as.numeric)
+# Set viability = 0 if viability < 0
+df_double <- df_double %>% mutate(across(all_of(cols_viability_4), ~ ifelse(. < 0, 0, .)))
+df_single <- df_single %>% mutate(across(all_of(cols_viability_6), ~ ifelse(. < 0, 0, .)))
+# mean and SD
+df_double$mean_viability <- apply(df_double[, cols_viability_4], 1, "mean")
+df_double$sd_viability <- apply(df_double[, cols_viability_4], 1, "sd")
+df_single$mean_viability <- apply(df_single[, cols_viability_6], 1, "mean")
+df_single$sd_viability <- apply(df_single[, cols_viability_6], 1, "sd")
+df_plot <- df_double[!is.na(df_double$sd_viability), ]
+  
+gc <- ggplot(df_plot, aes(x=mean_viability, y=sd_viability)) 
+gc <- gc + theme_bw(base_size = 11)
+gc <- gc + stat_density_2d(aes(fill = ..density..), geom = "raster", contour = FALSE, n = 500)
+gc <- gc + scale_fill_distiller(palette= "Spectral", direction=-1)
+gc <- gc + coord_cartesian(xlim=c(0, 1.1), ylim=c(0, 0.15))
+gc <- gc + xlab("Mean viability") + ylab("SD viability")
+gc
+
+```
+
+# Results
+
+```{r load_results, warning=FALSE}
+# Load data
+dir_result_ <- "../output/ONeil_2016"
+thre_alpha <- 5
+thre_beta <- 0.1
+
+#------------------------------
+# BayeSyC_normal result
+rds_df_stats_norm_ <- file.path(dir_result_, "./df_stats.bayesyc-i_norm.ONeil_2016.rds")
+
+if(file.exists(rds_df_stats_norm_)){
+  df_stats_norm <- readRDS(rds_df_stats_norm_) 
+}else{
+  df_stats_norm <- NULL
+  for(i in 1:583){
+    stats_ <- paste0(dir_result_, "/output.bayesyc-i_norm/stats.synergy.ONeil_2016.",i,".bayesyc-i_norm.csv")
+    df_stats <- read.csv(stats_, header=TRUE, sep=",", quote="", check.names=F, stringsAsFactors=F)
+    df_stats$combination_idx <- i
+    if(is.null(df_stats_norm)){
+      df_stats_norm <- df_stats
+    }else{
+      df_stats_norm <- rbind(df_stats_norm, df_stats)
+    }
+  }
+  saveRDS(df_stats_norm, file=rds_df_stats_norm_)
+}
+
+# Categorize: Synergistic (S), Antagonistic (A), or Neither (N)
+df_stats_norm$synergy_alpha12 <- ifelse(df_stats_norm$`Alpha12 50%` < 1/thre_alpha & df_stats_norm$`Alpha12 97.5%` < 1, "A", 
+                                         ifelse(df_stats_norm$`Alpha12 50%` > thre_alpha & df_stats_norm$`Alpha12 2.5%` > 1, "S", "N"))
+df_stats_norm$synergy_alpha21 <- ifelse(df_stats_norm$`Alpha21 50%` < 1/thre_alpha & df_stats_norm$`Alpha21 97.5%` < 1, "A", 
+                                         ifelse(df_stats_norm$`Alpha21 50%` > thre_alpha & df_stats_norm$`Alpha21 2.5%` > 1, "S", "N"))
+df_stats_norm$synergy_beta <- ifelse(df_stats_norm$`Beta 50%` < -thre_beta & df_stats_norm$`Beta 97.5%` < 0, "A", 
+                                      ifelse(df_stats_norm$`Beta 50%` > thre_beta & df_stats_norm$`Beta 2.5%` > 0, "S", "N"))
+
+v_id_norm <- paste(df_stats_norm[, 1], df_stats_norm[, 2], df_stats_norm[, 3], sep="_")
+
+
+#------------------------------
+# BayeSyC_gamma result
+rds_df_stats_gamma_ <- file.path(dir_result_, "./df_stats.bayesyc-i_gamma.ONeil_2016.rds")
+
+if(file.exists(rds_df_stats_gamma_)){
+  df_stats_gamma <- readRDS(rds_df_stats_gamma_) 
+}else{
+  df_stats_gamma <- NULL
+  for(i in 1:583){
+    stats_ <- paste0(dir_result_, "/output.bayesyc-i_gamma/stats.synergy.ONeil_2016.",i,".bayesyc-i_gamma.csv")
+    df_stats <- read.csv(stats_, header=TRUE, sep=",", quote="", check.names=F, stringsAsFactors=F)
+    df_stats$combination_idx <- i
+    if(is.null(df_stats_gamma)){
+      df_stats_gamma <- df_stats
+    }else{
+      df_stats_gamma <- rbind(df_stats_gamma, df_stats)
+    }
+  }
+  saveRDS(df_stats_gamma, file=rds_df_stats_gamma_)
+}
+
+# Categorize: Synergistic (S), Antagonistic (A), or Neither (N)
+df_stats_gamma$synergy_alpha12 <- ifelse(df_stats_gamma$`Alpha12 50%` < 1/thre_alpha & df_stats_gamma$`Alpha12 97.5%` < 1, "A", 
+                                         ifelse(df_stats_gamma$`Alpha12 50%` > thre_alpha & df_stats_gamma$`Alpha12 2.5%` > 1, "S", "N"))
+df_stats_gamma$synergy_alpha21 <- ifelse(df_stats_gamma$`Alpha21 50%` < 1/thre_alpha & df_stats_gamma$`Alpha21 97.5%` < 1, "A", 
+                                         ifelse(df_stats_gamma$`Alpha21 50%` > thre_alpha & df_stats_gamma$`Alpha21 2.5%` > 1, "S", "N"))
+df_stats_gamma$synergy_beta <- ifelse(df_stats_gamma$`Beta 50%` < -thre_beta & df_stats_gamma$`Beta 97.5%` < 0, "A", 
+                                      ifelse(df_stats_gamma$`Beta 50%` > thre_beta & df_stats_gamma$`Beta 2.5%` > 0, "S", "N"))
+
+v_id_gamma <- paste(df_stats_gamma[, 1], df_stats_gamma[, 2], df_stats_gamma[, 3], sep="_")
+
+
+#------------------------------
+# SynBa result
+rds_df_stats_synba_ <- file.path(dir_result_, "./df_stats.synba.ONeil_2016.rds")
+
+if(file.exists(rds_df_stats_synba_)){
+  df_stats_synba <- readRDS(rds_df_stats_synba_) 
+}else{
+  df_stats_synba <- NULL
+  for(i in 1:583){
+    stats_ <- paste0(dir_result_, "/output.synba_combo/stats.synergy.ONeil_2016.",i,".synba_combo.csv")
+    df_stats <- read.csv(stats_, header=TRUE, sep=",", quote="", check.names=F, stringsAsFactors=F)
+    df_stats$combination_idx <- i
+    if(is.null(df_stats_synba)){
+      df_stats_synba <- df_stats
+    }else{
+      df_stats_synba <- rbind(df_stats_synba, df_stats)
+    }
+  }
+  saveRDS(df_stats_synba, file=rds_df_stats_synba_)
+}
+
+# Categorize: Synergistic (S), Antagonistic (A), or Neither (N)
+df_stats_synba$synergy_alpha <- ifelse(df_stats_synba$`Alpha 50%` < 1/thre_alpha & df_stats_synba$`Alpha 97.5%` < 1, "A", 
+                                       ifelse(df_stats_synba$`Alpha 50%` > thre_alpha & df_stats_synba$`Alpha 2.5%` > 1, "S", "N"))
+df_stats_synba$synergy_beta <- ifelse(df_stats_synba$`Beta 50%` < -thre_beta & df_stats_synba$`Beta 97.5%` < 0, "A", 
+                                      ifelse(df_stats_synba$`Beta 50%` > thre_beta & df_stats_synba$`Beta 2.5%` > 0, "S", "N"))
+
+v_id_synba <- paste(df_stats_synba[, 1], df_stats_synba[, 2], df_stats_synba[, 3], sep="_")
+
+# Check rows of the data.frames are the same.
+sum(v_id_norm != v_id_synba)
+sum(v_id_gamma != v_id_synba)
+
+
+df_stats_norm_all <- df_stats_norm
+df_stats_gamma_all <- df_stats_gamma
+df_stats_synba_all <- df_stats_synba
+# Filter by success of fit
+df_stats_norm <- df_stats_norm %>% filter(`Success of fit`)
+df_stats_gamma <- df_stats_gamma %>% filter(`Success of fit`)
+df_stats_synba <- df_stats_synba %>% filter(`Success of fit`)
+
+```
+
+## WAIC
+### Violin plot
+
+```{r WAIC}
+
+library(showtext) # To show Greek characters
+showtext_auto() # To show Greek characters
+
+# Using all
+df_waic <- data.frame(method=c(rep("BayeSyC_gamma", nrow(df_stats_gamma_all)),
+                                 rep("BayeSyC_normal", nrow(df_stats_norm_all)),
+                                 rep("SynBa", nrow(df_stats_synba_all))),
+                        WAIC=c(df_stats_gamma_all$WAIC, df_stats_norm_all$WAIC, df_stats_synba_all$WAIC))
+
+p1 <- ggplot(df_waic, aes(x=method, y=WAIC))#, fill=method)) 
+p1 <- p1 + geom_violin(fill="gray60", color=NA, trim=TRUE)
+p1 <- p1 + geom_boxplot(width=0.1, outliers = FALSE)#, fill="gray")
+p1 <- p1 + theme_test(base_size=11)
+p1 <- p1 + theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+p1
+
+wilcox.test(df_stats_gamma_all$WAIC, df_stats_norm_all$WAIC,
+            alternative = c("two.sided"), mu=0,
+            paired = TRUE, exact = NULL, correct = TRUE,
+            conf.int = FALSE, conf.level = 0.95)
+
+wilcox.test(df_stats_gamma_all$WAIC, df_stats_synba_all$WAIC,
+            alternative = c("two.sided"), mu=0,
+            paired = TRUE, exact = NULL, correct = TRUE,
+            conf.int = FALSE, conf.level = 0.95)
+
+wilcox.test(df_stats_norm_all$WAIC, df_stats_synba_all$WAIC,
+            alternative = c("two.sided"), mu=0,
+            paired = TRUE, exact = NULL, correct = TRUE,
+            conf.int = FALSE, conf.level = 0.95)
+
+#ch_pval <- as.character(expression(p < 2.2 %*% 10^{-16}))
+ch_pval <- as.character(expression(p < 10^{-15}))
+
+# Add significance marks and segments
+# Set location of asterisks
+sig_tests <- data.frame(
+  group1 = c("BayeSyC_gamma", "BayeSyC_gamma", "BayeSyC_normal"),
+  group2 = c("BayeSyC_normal", "SynBa", "SynBa"),
+  xstart = c(1, 1, 2),
+  xend = c(2, 3, 3),
+  y = c(380, 620, 500),
+  #label = c("****", "****", "****")
+  label = c(ch_pval, ch_pval, ch_pval)
+)
+
+# function for drawing marks and lines
+add_sig_lines <- function(plot, tests) {
+  plot <- plot + 
+    geom_segment(data=tests, aes(x=xstart, xend=xend, y=y, yend=y), inherit.aes=FALSE, size=0.2) +  # segment
+    geom_text(data=tests, aes(x=(xstart+xend)/2, y=y + 50, label=label), inherit.aes=FALSE, size=2.5, parse=T)
+  return(plot)
+}
+
+# add significance lines and marks
+p1 <- add_sig_lines(p1, sig_tests)
+
+# plot
+print(p1)
+
+```
+
+### Pairwise WAIC
+
+```{r Pairwise_WAIC}
+
+df_waic <- data.frame("bayesyc_gamma"=df_stats_gamma_all$WAIC,
+                      "bayesyc_norm"=df_stats_norm_all$WAIC,
+                      "synba"=df_stats_synba_all$WAIC)
+mx_rank_waic <- t(apply(df_waic, 1, order))
+
+colnames(mx_rank_waic) <- c("bayesyc_gamma", "bayesyc_norm", "synba")
+
+df_rank_waic <- data.frame(method=rep(c("BayeSyC_gamma", "BayeSyC_normal", "SynBa"), each=3),
+                             Rank=rep(c("1","2","3"), 3),
+                             percent=c(table(mx_rank_waic[, "bayesyc_gamma"]),
+                                       table(mx_rank_waic[, "bayesyc_norm"]),
+                                       table(mx_rank_waic[, "synba"])) / nrow(mx_rank_waic) * 100
+)
+
+p2 <- ggplot(df_rank_waic, aes(x=method, y=percent, fill=Rank)) 
+p2 <- p2 + geom_bar(stat="identity")#, position="dodge")
+p2 <- p2 + geom_text(aes(label=paste0(round(percent,1),"%")), position = position_stack(vjust = 0.5), 
+                     color="black", size = 3) 
+p2 <- p2 + scale_fill_manual(values=c("pink2", "lightgreen", "lightblue2"))
+p2 <- p2 + theme_bw(base_size=11)
+p2 <- p2 + theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+p2
+
+
+# Only for bayesyc_norm and synba
+
+df_waic <- data.frame("bayesyc_norm"=df_stats_norm_all$WAIC,
+                      "synba"=df_stats_synba_all$WAIC)
+mx_rank_waic <- t(apply(df_waic, 1, order))
+
+colnames(mx_rank_waic) <- c("bayesyc_norm", "synba")
+
+df_rank_waic <- data.frame(method=rep(c("bayesyc_norm", "SynBa"), each=2),
+                             rank=rep(c("1","2"), 2),
+                             percent=c(table(mx_rank_waic[, "bayesyc_norm"]),
+                                       table(mx_rank_waic[, "synba"])) / nrow(mx_rank_waic) * 100
+)
+
+```
+
+### Plot of Mean-SD and WAIC
+
+```{r plot_WAIC}
+
+out_pdf_loglik_ <- paste0(prefix1, "mean-sd.WAIC.ONeil_2016.pdf")
+
+axis_margin <- 5.5
+
+# Output PDF
+pdf(file=out_pdf_loglik_, colormodel="cmyk", pointsize=7, width=9.33, height=7)
+tryCatch({
+  
+  grid.newpage() # make new blank figure
+  pushViewport(viewport(layout=grid.layout(2, 130)))
+
+  vp.1  = viewport(layout.pos.row=1, layout.pos.col=1:60)
+  print(gc, vp=vp.1)
+  vp.2  = viewport(layout.pos.row=1, layout.pos.col=61:92)
+  print(p1, vp=vp.2)
+  vp.3  = viewport(layout.pos.row=1, layout.pos.col=93:130)
+  print(p2, vp=vp.3)
+  
+}, finally = { dev.off() }
+)
+
+
+```
+
+
+## Log likelihood
+### Violin plot
+
+```{r loglik}
+
+# Using all
+df_loglik <- data.frame(method=c(rep("BayeSyC_gamma", nrow(df_stats_gamma_all)),
+                                 rep("BayeSyC_normal", nrow(df_stats_norm_all)),
+                                 rep("SynBa", nrow(df_stats_synba_all))),
+                        sum_loglik=c(df_stats_gamma_all$sum_LogLik, df_stats_norm_all$sum_LogLik, df_stats_synba_all$sum_LogLik),
+                        mean_loglik=c(df_stats_gamma_all$mean_LogLik, df_stats_norm_all$mean_LogLik, df_stats_synba_all$mean_LogLik))
+
+p1 <- ggplot(df_loglik, aes(x=method, y=sum_loglik))#, fill=method)) 
+#p1 <- p1 + geom_violin(fill="gray", color="gray50")
+p1 <- p1 + geom_violin(fill="gray60", color=NA, trim=TRUE)
+p1 <- p1 + geom_boxplot(width=0.1, outliers = FALSE)#, fill="gray")
+#p1 <- p1 + theme_bw(base_size=11)
+p1 <- p1 + theme_test(base_size=11)
+p1 <- p1 + theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+p1
+
+wilcox.test(df_stats_gamma_all$sum_LogLik, df_stats_norm_all$sum_LogLik,
+            alternative = c("two.sided"), mu=0,
+            paired = TRUE, exact = NULL, correct = TRUE,
+            conf.int = FALSE, conf.level = 0.95)
+
+wilcox.test(df_stats_gamma_all$sum_LogLik, df_stats_synba_all$sum_LogLik,
+            alternative = c("two.sided"), mu=0,
+            paired = TRUE, exact = NULL, correct = TRUE,
+            conf.int = FALSE, conf.level = 0.95)
+
+wilcox.test(df_stats_norm_all$sum_LogLik, df_stats_synba_all$sum_LogLik,
+            alternative = c("two.sided"), mu=0,
+            paired = TRUE, exact = NULL, correct = TRUE,
+            conf.int = FALSE, conf.level = 0.95)
+
+#ch_pval <- as.character(expression(p < 2.2 %*% 10^{-16}))
+ch_pval <- as.character(expression(p < 10^{-15}))
+
+# Add significance marks and segments
+# Set location of asterisks
+sig_tests <- data.frame(
+  group1 = c("BayeSyC_gamma", "BayeSyC_gamma", "BayeSyC_normal"),
+  group2 = c("BayeSyC_normal", "SynBa", "SynBa"),
+  xstart = c(1, 1, 2),
+  xend = c(2, 3, 3),
+  y = c(600, 650, 550),
+  #label = c("****", "****", "****")
+  label = c(ch_pval, ch_pval, ch_pval)
+)
+
+# function for drawing marks and lines
+add_sig_lines <- function(plot, tests) {
+  plot <- plot + 
+    geom_segment(data=tests, aes(x=xstart, xend=xend, y=y, yend=y), inherit.aes=FALSE, size=0.2) +  # segment
+    geom_text(data=tests, aes(x=(xstart+xend)/2, y=y + 20, label=label), inherit.aes=FALSE, size=2.5, parse=T)
+      
+  return(plot)
+}
+
+# add significance lines and marks
+p1 <- add_sig_lines(p1, sig_tests)
+
+# plot
+print(p1)
+
+```
+
+### Pairwise log likelihood
+
+```{r Pairwise_loglik}
+
+df_sum_loglik <- data.frame("bayesyc_gamma"=df_stats_gamma_all$sum_LogLik,
+                            "bayesyc_norm"=df_stats_norm_all$sum_LogLik,
+                            "synba"=df_stats_synba_all$sum_LogLik)
+mx_rank_loglik <- t(4 - apply(df_sum_loglik, 1, order))
+
+colnames(mx_rank_loglik) <- c("bayesyc_gamma", "bayesyc_norm", "synba")
+
+df_rank_loglik <- data.frame(method=rep(c("BayeSyC_gamma", "BayeSyC_normal", "SynBa"), each=3),
+                             Rank=rep(c("1","2","3"), 3),
+                             percent=c(table(mx_rank_loglik[, "bayesyc_gamma"]),
+                                       table(mx_rank_loglik[, "bayesyc_norm"]),
+                                       table(mx_rank_loglik[, "synba"])) / nrow(mx_rank_loglik) * 100
+)
+
+p2 <- ggplot(df_rank_loglik, aes(x=method, y=percent, fill=Rank)) 
+p2 <- p2 + geom_bar(stat="identity")#, position="dodge")
+p2 <- p2 + geom_text(aes(label=paste0(round(percent,1),"%")), position = position_stack(vjust = 0.5), 
+                     color="black", size = 3) 
+p2 <- p2 + scale_fill_manual(values=c("pink2", "lightgreen", "lightblue2"))
+p2 <- p2 + theme_bw(base_size=11)
+p2 <- p2 + theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+p2
+
+# Only for bayesyc_norm and synba
+
+df_sum_loglik <- data.frame("bayesyc_norm"=df_stats_norm_all$sum_LogLik,
+                      "synba"=df_stats_synba_all$sum_LogLik)
+mx_rank_loglik <- t(3 - apply(df_sum_loglik, 1, order))
+
+colnames(mx_rank_loglik) <- c("bayesyc_norm", "synba")
+
+df_rank_loglik <- data.frame(method=rep(c("bayesyc_norm", "SynBa"), each=2),
+                             rank=rep(c("1","2"), 2),
+                             percent=c(table(mx_rank_loglik[, "bayesyc_norm"]),
+                                       table(mx_rank_loglik[, "synba"])) / nrow(mx_rank_loglik) * 100
+)
+
+
+
+```
+
+### Plot of loglikelihood
+
+```{r plot_loglik}
+
+out_pdf_loglik_ <- paste0(prefix1, "loglik.ONeil_2016.pdf")
+
+axis_margin <- 5.5
+
+# Output PDF
+pdf(file=out_pdf_loglik_, colormodel="cmyk", pointsize=7, width=9.33, height=7)
+tryCatch({
+  
+  grid.newpage() # make new blank figure
+  pushViewport(viewport(layout=grid.layout(2, 130)))
+  
+  vp.2  = viewport(layout.pos.row=1, layout.pos.col=61:92)
+  print(p1, vp=vp.2)
+  vp.3  = viewport(layout.pos.row=1, layout.pos.col=93:130)
+  print(p2, vp=vp.3)
+  
+}, finally = { dev.off() }
+)
+
+
+```
+
+# Synergy Alpha
+
+```{r synergistic_alpha, warning=FALSE}
+
+#------------------------------
+# BayeSyC_normal
+df_count_category_norm_alpha1 <- df_stats_norm %>% group_by(Compound_1, synergy_alpha12) %>% 
+                           dplyr::summarise(count = n(), .groups="keep") %>% 
+                           tidyr::pivot_wider(names_from=synergy_alpha12, values_from=count, values_fill=list(count=0))
+df_count_category_norm_alpha1 <- tibble::column_to_rownames(df_count_category_norm_alpha1, var = "Compound_1")
+
+df_count_category_norm_alpha2 <- df_stats_norm %>% group_by(Compound_2, synergy_alpha21) %>% 
+                           dplyr::summarise(count = n(), .groups="keep") %>% 
+                           tidyr::pivot_wider(names_from=synergy_alpha21, values_from=count, values_fill=list(count=0))
+df_count_category_norm_alpha2 <- tibble::column_to_rownames(df_count_category_norm_alpha2, var = "Compound_2")
+
+# merge Compound_1 and Compound_2
+df_count_category_norm_alpha <- merge(df_count_category_norm_alpha1, df_count_category_norm_alpha2, by = "row.names", all = TRUE)
+df_count_category_norm_alpha[is.na(df_count_category_norm_alpha)] <- 0
+df_count_category_norm_alpha$S <- df_count_category_norm_alpha$S.x + df_count_category_norm_alpha$S.y
+df_count_category_norm_alpha$N <- df_count_category_norm_alpha$N.x + df_count_category_norm_alpha$N.y
+df_count_category_norm_alpha$A <- df_count_category_norm_alpha$A.x + df_count_category_norm_alpha$A.y
+df_count_category_norm_alpha <- tibble::column_to_rownames(df_count_category_norm_alpha, var = "Row.names") %>%
+                          select(S, N, A)
+
+df_count_category_norm_alpha$count <- apply(df_count_category_norm_alpha, 1, sum)
+
+df_count_category_norm_alpha$ratio_S <- df_count_category_norm_alpha$S / df_count_category_norm_alpha$count
+df_count_category_norm_alpha$ratio_A <- df_count_category_norm_alpha$A / df_count_category_norm_alpha$count
+df_count_category_norm_alpha$score <- df_count_category_norm_alpha$S - df_count_category_norm_alpha$A
+
+df_count_category_norm_alpha$compound <- rownames(df_count_category_norm_alpha)
+
+#------------------------------
+# BayeSyC_gamma
+df_count_category_gamma_alpha1 <- df_stats_gamma %>% group_by(Compound_1, synergy_alpha12) %>% 
+                           dplyr::summarise(count = n(), .groups="keep") %>% 
+                           tidyr::pivot_wider(names_from=synergy_alpha12, values_from=count, values_fill=list(count=0))
+df_count_category_gamma_alpha1 <- tibble::column_to_rownames(df_count_category_gamma_alpha1, var = "Compound_1")
+
+df_count_category_gamma_alpha2 <- df_stats_gamma %>% group_by(Compound_2, synergy_alpha21) %>% 
+                           dplyr::summarise(count = n(), .groups="keep") %>% 
+                           tidyr::pivot_wider(names_from=synergy_alpha21, values_from=count, values_fill=list(count=0))
+df_count_category_gamma_alpha2 <- tibble::column_to_rownames(df_count_category_gamma_alpha2, var = "Compound_2")
+
+# merge Compound_1 and Compound_2
+df_count_category_gamma_alpha <- merge(df_count_category_gamma_alpha1, df_count_category_gamma_alpha2, by = "row.names", all = TRUE)
+df_count_category_gamma_alpha[is.na(df_count_category_gamma_alpha)] <- 0
+df_count_category_gamma_alpha$S <- df_count_category_gamma_alpha$S.x + df_count_category_gamma_alpha$S.y
+df_count_category_gamma_alpha$N <- df_count_category_gamma_alpha$N.x + df_count_category_gamma_alpha$N.y
+df_count_category_gamma_alpha$A <- df_count_category_gamma_alpha$A.x + df_count_category_gamma_alpha$A.y
+df_count_category_gamma_alpha <- tibble::column_to_rownames(df_count_category_gamma_alpha, var = "Row.names") %>%
+                          select(S, N, A)
+
+df_count_category_gamma_alpha$count <- apply(df_count_category_gamma_alpha, 1, sum)
+
+df_count_category_gamma_alpha$ratio_S <- df_count_category_gamma_alpha$S / df_count_category_gamma_alpha$count
+df_count_category_gamma_alpha$ratio_A <- df_count_category_gamma_alpha$A / df_count_category_gamma_alpha$count
+df_count_category_gamma_alpha$score <- df_count_category_gamma_alpha$S - df_count_category_gamma_alpha$A
+
+df_count_category_gamma_alpha$compound <- rownames(df_count_category_gamma_alpha)
+
+
+#------------------------------
+# SynBa
+df_count_category_synba_alpha1 <- df_stats_synba %>% group_by(Compound_1, synergy_alpha) %>% 
+                           dplyr::summarise(count = n(), .groups="keep") %>% 
+                           tidyr::pivot_wider(names_from=synergy_alpha, values_from=count, values_fill=list(count=0))
+df_count_category_synba_alpha1 <- tibble::column_to_rownames(df_count_category_synba_alpha1, var = "Compound_1")
+
+df_count_category_synba_alpha2 <- df_stats_synba %>% group_by(Compound_2, synergy_alpha) %>% 
+                           dplyr::summarise(count = n(), .groups="keep") %>% 
+                           tidyr::pivot_wider(names_from=synergy_alpha, values_from=count, values_fill=list(count=0))
+df_count_category_synba_alpha2 <- tibble::column_to_rownames(df_count_category_synba_alpha2, var = "Compound_2")
+
+# merge Compound_1 and Compound_2
+df_count_category_synba_alpha <- merge(df_count_category_synba_alpha1, df_count_category_synba_alpha2, by = "row.names", all = TRUE)
+df_count_category_synba_alpha[is.na(df_count_category_synba_alpha)] <- 0
+df_count_category_synba_alpha$S <- df_count_category_synba_alpha$S.x + df_count_category_synba_alpha$S.y
+df_count_category_synba_alpha$N <- df_count_category_synba_alpha$N.x + df_count_category_synba_alpha$N.y
+df_count_category_synba_alpha$A <- df_count_category_synba_alpha$A.x + df_count_category_synba_alpha$A.y
+df_count_category_synba_alpha <- tibble::column_to_rownames(df_count_category_synba_alpha, var = "Row.names") %>%
+                          select(S, N, A)
+
+df_count_category_synba_alpha$count <- apply(df_count_category_synba_alpha, 1, sum)
+
+df_count_category_synba_alpha$ratio_S <- df_count_category_synba_alpha$S / df_count_category_synba_alpha$count
+df_count_category_synba_alpha$ratio_A <- df_count_category_synba_alpha$A / df_count_category_synba_alpha$count
+df_count_category_synba_alpha$score <- df_count_category_synba_alpha$S - df_count_category_synba_alpha$A
+
+df_count_category_synba_alpha$compound <- rownames(df_count_category_synba_alpha)
+
+```
+
+# Synergy Beta
+
+```{r synergistic_beta, warning=FALSE}
+
+#------------------------------
+# BayeSyC_normal
+df_count_category_norm_beta1 <- df_stats_norm %>% group_by(Compound_1, synergy_beta) %>% 
+                           dplyr::summarise(count = n(), .groups="keep") %>% 
+                           tidyr::pivot_wider(names_from=synergy_beta, values_from=count, values_fill=list(count=0))
+df_count_category_norm_beta1 <- tibble::column_to_rownames(df_count_category_norm_beta1, var = "Compound_1")
+
+df_count_category_norm_beta2 <- df_stats_norm %>% group_by(Compound_2, synergy_beta) %>% 
+                           dplyr::summarise(count = n(), .groups="keep") %>% 
+                           tidyr::pivot_wider(names_from=synergy_beta, values_from=count, values_fill=list(count=0))
+df_count_category_norm_beta2 <- tibble::column_to_rownames(df_count_category_norm_beta2, var = "Compound_2")
+
+# merge Compound_1 and Compound_2
+df_count_category_norm_beta <- merge(df_count_category_norm_beta1, df_count_category_norm_beta2, by = "row.names", all = TRUE)
+df_count_category_norm_beta[is.na(df_count_category_norm_beta)] <- 0
+df_count_category_norm_beta$S <- df_count_category_norm_beta$S.x + df_count_category_norm_beta$S.y
+df_count_category_norm_beta$N <- df_count_category_norm_beta$N.x + df_count_category_norm_beta$N.y
+df_count_category_norm_beta$A <- df_count_category_norm_beta$A.x + df_count_category_norm_beta$A.y
+df_count_category_norm_beta <- tibble::column_to_rownames(df_count_category_norm_beta, var = "Row.names") %>%
+                          select(S, N, A)
+
+df_count_category_norm_beta$count <- apply(df_count_category_norm_beta, 1, sum)
+
+df_count_category_norm_beta$ratio_S <- df_count_category_norm_beta$S / df_count_category_norm_beta$count
+df_count_category_norm_beta$ratio_A <- df_count_category_norm_beta$A / df_count_category_norm_beta$count
+df_count_category_norm_beta$score <- df_count_category_norm_beta$S - df_count_category_norm_beta$A
+
+df_count_category_norm_beta$compound <- rownames(df_count_category_norm_beta)
+
+
+#------------------------------
+# BayeSyC_gamma
+df_count_category_gamma_beta1 <- df_stats_gamma %>% group_by(Compound_1, synergy_beta) %>% 
+                           dplyr::summarise(count = n(), .groups="keep") %>% 
+                           tidyr::pivot_wider(names_from=synergy_beta, values_from=count, values_fill=list(count=0))
+df_count_category_gamma_beta1 <- tibble::column_to_rownames(df_count_category_gamma_beta1, var = "Compound_1")
+
+df_count_category_gamma_beta2 <- df_stats_gamma %>% group_by(Compound_2, synergy_beta) %>% 
+                           dplyr::summarise(count = n(), .groups="keep") %>% 
+                           tidyr::pivot_wider(names_from=synergy_beta, values_from=count, values_fill=list(count=0))
+df_count_category_gamma_beta2 <- tibble::column_to_rownames(df_count_category_gamma_beta2, var = "Compound_2")
+
+# merge Compound_1 and Compound_2
+df_count_category_gamma_beta <- merge(df_count_category_gamma_beta1, df_count_category_gamma_beta2, by = "row.names", all = TRUE)
+df_count_category_gamma_beta[is.na(df_count_category_gamma_beta)] <- 0
+df_count_category_gamma_beta$S <- df_count_category_gamma_beta$S.x + df_count_category_gamma_beta$S.y
+df_count_category_gamma_beta$N <- df_count_category_gamma_beta$N.x + df_count_category_gamma_beta$N.y
+df_count_category_gamma_beta$A <- df_count_category_gamma_beta$A.x + df_count_category_gamma_beta$A.y
+df_count_category_gamma_beta <- tibble::column_to_rownames(df_count_category_gamma_beta, var = "Row.names") %>%
+                          select(S, N, A)
+
+df_count_category_gamma_beta$count <- apply(df_count_category_gamma_beta, 1, sum)
+
+df_count_category_gamma_beta$ratio_S <- df_count_category_gamma_beta$S / df_count_category_gamma_beta$count
+df_count_category_gamma_beta$ratio_A <- df_count_category_gamma_beta$A / df_count_category_gamma_beta$count
+df_count_category_gamma_beta$score <- df_count_category_gamma_beta$S - df_count_category_gamma_beta$A
+
+df_count_category_gamma_beta$compound <- rownames(df_count_category_gamma_beta)
+
+
+#------------------------------
+# SynBa
+df_count_category_synba_beta1 <- df_stats_synba %>% group_by(Compound_1, synergy_beta) %>% 
+                           dplyr::summarise(count = n(), .groups="keep") %>% 
+                           tidyr::pivot_wider(names_from=synergy_beta, values_from=count, values_fill=list(count=0))
+df_count_category_synba_beta1 <- tibble::column_to_rownames(df_count_category_synba_beta1, var = "Compound_1")
+
+df_count_category_synba_beta2 <- df_stats_synba %>% group_by(Compound_2, synergy_beta) %>% 
+                           dplyr::summarise(count = n(), .groups="keep") %>% 
+                           tidyr::pivot_wider(names_from=synergy_beta, values_from=count, values_fill=list(count=0))
+df_count_category_synba_beta2 <- tibble::column_to_rownames(df_count_category_synba_beta2, var = "Compound_2")
+
+# merge Compound_1 and Compound_2
+df_count_category_synba_beta <- merge(df_count_category_synba_beta1, df_count_category_synba_beta2, by = "row.names", all = TRUE)
+df_count_category_synba_beta[is.na(df_count_category_synba_beta)] <- 0
+df_count_category_synba_beta$S <- df_count_category_synba_beta$S.x + df_count_category_synba_beta$S.y
+df_count_category_synba_beta$N <- df_count_category_synba_beta$N.x + df_count_category_synba_beta$N.y
+df_count_category_synba_beta$A <- df_count_category_synba_beta$A.x + df_count_category_synba_beta$A.y
+df_count_category_synba_beta <- tibble::column_to_rownames(df_count_category_synba_beta, var = "Row.names") %>%
+                          select(S, N, A)
+
+df_count_category_synba_beta$count <- apply(df_count_category_synba_beta, 1, sum)
+
+df_count_category_synba_beta$ratio_S <- df_count_category_synba_beta$S / df_count_category_synba_beta$count
+df_count_category_synba_beta$ratio_A <- df_count_category_synba_beta$A / df_count_category_synba_beta$count
+df_count_category_synba_beta$score <- df_count_category_synba_beta$S - df_count_category_synba_beta$A
+
+df_count_category_synba_beta$compound <- rownames(df_count_category_synba_beta)
+
+
+```
+
+
+## Plot of scores
+
+```{r out_pdf_scores, warning=FALSE}
+
+out_pdf_scores_ <- paste0(prefix2, "synergistic_drugs.scores.ONeil_2016.pdf")
+
+axis_margin <- 5.5
+
+# Output PDF
+pdf(file=out_pdf_scores_, colormodel="cmyk", pointsize=7, width=9.33, height=7)
+tryCatch({
+
+  #------------------------------
+  # BayeSyC_gamma Alpha
+  grid.newpage() # make new blank figure
+  pushViewport(viewport(layout=grid.layout(4, 4)))
+
+  df_plot_scores <- df_count_category_gamma_alpha %>% select(compound, S, A) %>% 
+                    tidyr::pivot_longer(cols = -compound, names_to = c("category"), values_to="count")
+  
+  v_compound <- df_count_category_gamma_alpha[order(df_count_category_gamma_alpha$score, 
+                                                      order(df_count_category_gamma_alpha$compound, decreasing=T),
+                                                decreasing=F), "compound"]
+    
+  p1 <- ggplot(df_plot_scores, aes(x=count, y=factor(compound, levels=v_compound), fill=factor(category, levels=c("S", "A")))) +
+    geom_col(width=0.7, position=position_dodge(width = 0.85)) +
+    coord_cartesian(xlim=c(0, 400)) + 
+    theme_bw() + 
+    labs(fill = "category") +
+    theme(
+      axis.title.y = element_blank(),
+      legend.position = 'top',
+      plot.margin = margin(axis_margin, axis_margin, axis_margin, 0),
+      axis.text.y.left = element_text(margin = margin(0, axis_margin, 0, axis_margin))
+    )
+  vp.1  = viewport(layout.pos.row=1:4, layout.pos.col=1)
+  print(p1, vp=vp.1)
+  
+  
+  #------------------------------
+  # BayeSyC_gamma Beta
+  df_plot_scores <- df_count_category_gamma_beta %>% select(compound, S, A) %>% 
+                    tidyr::pivot_longer(cols = -compound, names_to = c("category"), values_to="count")
+  
+  v_compound <- df_count_category_gamma_beta[order(df_count_category_gamma_beta$score, 
+                                                      order(df_count_category_gamma_beta$compound, decreasing=T),
+                                                decreasing=F), "compound"]
+    
+  p2 <- ggplot(df_plot_scores, aes(x=count, y=factor(compound, levels=v_compound), fill=factor(category, levels=c("S", "A")))) +
+    geom_col(width=0.7, position=position_dodge(width = 0.85)) +
+    coord_cartesian(xlim=c(0, 400)) + 
+    theme_bw() + 
+    labs(fill = "category") +
+    theme(
+      axis.title.y = element_blank(),
+      legend.position = 'top',
+      plot.margin = margin(axis_margin, axis_margin, axis_margin, 0),
+      axis.text.y.left = element_text(margin = margin(0, axis_margin, 0, axis_margin))
+    )
+  vp.2  = viewport(layout.pos.row=1:4, layout.pos.col=2)
+  print(p2, vp=vp.2)
+  
+
+    
+
+  #------------------------------
+  # SynBa Alpha
+  df_plot_scores <- df_count_category_synba_alpha %>% select(compound, S, A) %>% 
+                    tidyr::pivot_longer(cols = -compound, names_to = c("category"), values_to="count")
+  
+  v_compound <- df_count_category_synba_alpha[order(df_count_category_gamma_alpha$score, 
+                                                      order(df_count_category_gamma_alpha$compound, decreasing=T),
+                                                decreasing=F), "compound"]
+    
+  p3 <- ggplot(df_plot_scores, aes(x=count, y=factor(compound, levels=v_compound), fill=factor(category, levels=c("S", "A")))) +
+    geom_col(width=0.7, position=position_dodge(width = 0.85)) +
+    coord_cartesian(xlim=c(0, 400)) + 
+    theme_bw() + 
+    labs(fill = "category") +
+    theme(
+      axis.title.y = element_blank(),
+      legend.position = 'top',
+      plot.margin = margin(axis_margin, axis_margin, axis_margin, 0),
+      axis.text.y.left = element_text(margin = margin(0, axis_margin, 0, axis_margin))
+    )
+  vp.3  = viewport(layout.pos.row=1:4, layout.pos.col=3)
+  print(p3, vp=vp.3)
+  
+  
+  #------------------------------
+  # SynBa Beta
+  df_plot_scores <- df_count_category_synba_beta %>% select(compound, S, A) %>% 
+                    tidyr::pivot_longer(cols = -compound, names_to = c("category"), values_to="count")
+  
+  v_compound <- df_count_category_synba_beta[order(df_count_category_gamma_beta$score, 
+                                                      order(df_count_category_gamma_beta$compound, decreasing=T),
+                                                decreasing=F), "compound"]
+    
+  p4 <- ggplot(df_plot_scores, aes(x=count, y=factor(compound, levels=v_compound), fill=factor(category, levels=c("S", "A")))) +
+    geom_col(width=0.7, position=position_dodge(width = 0.85)) +
+    coord_cartesian(xlim=c(0, 400)) + 
+    theme_bw() + 
+    labs(fill = "category") +
+    theme(
+      axis.title.y = element_blank(),
+      legend.position = 'top',
+      plot.margin = margin(axis_margin, axis_margin, axis_margin, 0),
+      axis.text.y.left = element_text(margin = margin(0, axis_margin, 0, axis_margin))
+    )
+  vp.4  = viewport(layout.pos.row=1:4, layout.pos.col=4)
+  print(p4, vp=vp.4)
+  
+}, finally = { dev.off() }
+)
+
+
+```

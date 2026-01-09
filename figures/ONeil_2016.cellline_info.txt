@@ -1,0 +1,39 @@
+A2058	Melanoma
+A375	Melanoma
+HT144	Melanoma
+RPMI7951	Melanoma
+SKMEL30	Melanoma
+UACC62	Melanoma
+A2780	Ovarian Cancer
+CAOV3	Ovarian Cancer
+ES2	Ovarian Cancer
+OCUBM	Breast Cancer
+OV90	Ovarian Cancer
+OVCAR3	Ovarian Cancer
+SKOV3	Ovarian Cancer
+UWB1289	Ovarian Cancer
+UWB1289BRCA1	Ovarian Cancer
+A427	Lung Cancer
+NCIH1650	Lung Cancer
+NCIH2122	Lung Cancer (Lymphoblast)
+NCIH23	Lung Cancer
+NCIH460	Lung Cancer
+NCIH520	Lung Cancer
+SKMES1	Lung Cancer
+COLO320DM	Colorectal Cancer
+DLD1	Colorectal Cancer
+HCT116	Colorectal Cancer
+HT29	Colorectal Cancer
+LOVO	Colorectal Cancer
+RKO	Colorectal Cancer
+SW620	Colorectal Cancer (Lymph Node Metastasis)
+SW837	Colorectal Cancer
+EFM192B	Breast Cancer
+KPL1	Breast Cancer
+MDAMB436	Breast Cancer
+T47D	Breast Cancer
+ZR751	Breast Cancer
+LNCAP	Prostate Cancer
+VCAP	Prostate Cancer
+PA1	Ovarian Teratocarcinoma
+MSTO	Mesothelioma

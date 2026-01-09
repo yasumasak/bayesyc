@@ -1,0 +1,38 @@
+Sunitinib	Kinases
+BEZ-235	Kinases
+Lapatinib	Kinases
+MK-8776	Kinases
+Sorafenib	Kinases
+MRK-003	Signaling modulators
+MK-8669	Signaling modulators
+MK-4827	DNA synthesis & damage
+AZD1775	Kinases
+MK-2206	Signaling modulators
+Zolinza	Epigenetic regulators
+L778123	Kinases
+Erlotinib	Kinases
+MK-5108	Kinases
+SN-38	DNA synthesis & damage
+Paclitaxel	Mitotic checkpoint
+Etoposide	DNA synthesis & damage
+Vinblastine	Mitotic checkpoint
+Dinaciclib	Kinases
+geldanamycin	Signaling modulators
+Dasatinib	Kinases
+Topotecan	DNA synthesis & damage
+Vinorelbine	Mitotic checkpoint
+Temozolomide	DNA synthesis & damage
+Gemcitabine	DNA synthesis & damage
+ABT-888	DNA synthesis & damage
+MK-4541	Receptors & channels
+5-FU	DNA synthesis & damage
+Cyclophosphamide	DNA synthesis & damage
+Dexamethasone	Receptors & channels
+Metformin	Signaling modulators
+PD325901	Kinases
+Bortezomib	Signaling modulators
+Mitomycine	DNA synthesis & damage
+Oxaliplatin	DNA synthesis & damage
+Carboplatin	DNA synthesis & damage
+Methotrexate	DNA synthesis & damage
+Doxorubicin	DNA synthesis & damage

@@ -1,0 +1,272 @@
+---
+title: "Dose Response Analysis"
+author: "Yasumasa Kimura"
+date: "`r Sys.Date()`"
+output: html_document
+params:
+   dir_in: "../input/single_drug" # Input directory
+   input_tsv: "PLT000174134.tsv" # Input TSV file
+   dir_out: "../output/single_drug" # Output directory
+   col_target: "y" # Target column name in input file
+   out_name: "test" # Output label
+   model_drc: "logistic4_nb" # Stan model for mono-phasic logistic curve in ../stan/
+   model_biphasic: "biphasic4_nb" # Stan modelfor bi-phasic logistic curve in ../stan/
+   lb_log10_C: -10 # Lower bound of prior of log10(C)
+   ub_log10_C: 6 # Upper bound of prior of log10(C)
+   n_chains: 4 # Number of chains in MCMC sampling
+   n_cores: 4 # Number of cores used per chain in MCMC sampling
+   n_iter: 4000 # Number of iterations for both warmup and sampling phases in MCMC
+   n_retry: 2 # Number of retry attempts for MCMC sampling if it fails
+   l_pred: 20 # Number of data points for prediction
+   thre_tc: 50 # Minimum T/C % required to display IC50 estimate
+   thre_ic50: 100 # Threshold: display IC50 if within min_dose/thre_ic50 to max_dose*thre_ic50
+   thre_rhat: 1.1 # All Rhat values are required to be lower than this value for successful fit
+   cmdstanr_tmp: NULL  # Directory for intermediate CSV files used by CmdStanR
+   save_rds: FALSE
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = FALSE)
+
+library(ggplot2)
+library(plotly)
+library(pals)
+
+dir.create(params$dir_out, showWarnings=F, recursive=F, mode="0750")
+if(!is.null(params$cmdstanr_tmp)) dir.create(params$cmdstanr_tmp, showWarnings=F, recursive=F, mode="0750")
+
+```
+
+## Load data
+Reads the input TSV and constructs a Manual_Input_Single object to standardize the dataset for downstream analysis. 
+
+```{r load_data}
+
+# Read input TSV
+df_input <- read.csv(file.path(params$dir_in, params$input_tsv), sep="\t", header=T, check.names=F, stringsAsFactors=F)
+
+# Print parameters
+out_params_ <- paste0(params$dir_out, "/params.",params$out_name,".csv")
+sink(out_params_)
+for(p in names(params)){
+  cat(p,"\t",params[[p]],"\n",sep="")
+}
+sink()
+
+# Create whole input object 
+whole_input <- bayesyc::Manual_Input_Single$new(params, df_input)
+
+# Show input files' info
+df_files <- data.frame(No=seq(whole_input$ls_data), Analysis=whole_input$v_analysis, Specimen=whole_input$v_specimen)
+knitr::kable(df_files)
+
+#------------------------------
+# Process input data
+whole_input$process_input_data("target", params)
+
+```
+
+## Stats of controls
+Computes mean, median, and standard deviation statistics for high and low controls across each dataset and assembles formatted tables for display.
+
+```{r stats_control, warning=FALSE}
+
+#------------------------------
+# Stats of controls
+
+ls_data <- whole_input$ls_data
+ls_show_hc <- NULL
+ls_show_lc <- NULL
+ls_show_v <- NULL
+show_v <- TRUE
+
+for(p in seq(ls_data)){
+
+  ls_data[[p]]$set_summary_data()
+  analysis <- ls_data[[p]]$analysis
+  v_metric <- ls_data[[p]]$v_metric
+  n_metric <- length(v_metric)
+  # List to show HC
+  ls_show_hc$V1 <- c(ls_show_hc$V1, rep(bayesyc::cat_file_info(p, analysis), n_metric))
+  ls_show_hc$V4 <- c(ls_show_hc$V4, round(ls_data[[p]]$v_hc_mean, digits=1))
+  ls_show_hc$V5 <- c(ls_show_hc$V5, round(ls_data[[p]]$v_hc_med, digits=1))
+  ls_show_hc$V6 <- c(ls_show_hc$V6, round(ls_data[[p]]$v_hc_sd, digits=1))
+  # List to show LC
+  ls_show_lc$V1 <- c(ls_show_lc$V1, rep(bayesyc::cat_file_info(p, analysis), n_metric))
+  ls_show_lc$V4 <- c(ls_show_lc$V4, round(ls_data[[p]]$v_lc_mean, digits=1))
+  ls_show_lc$V5 <- c(ls_show_lc$V5, round(ls_data[[p]]$v_lc_med, digits=1))
+  ls_show_lc$V6 <- c(ls_show_lc$V6, round(ls_data[[p]]$v_lc_sd, digits=1))
+
+}
+knitr::kable(as.data.frame(ls_show_hc, col.names=c('High controls', 'Mean', 'Median', 'SD'), check.names=F), row.names=F)
+knitr::kable(as.data.frame(ls_show_lc, col.names=c('Low controls', 'Mean', 'Median', 'SD'), check.names=F), row.names=F)
+
+```
+
+## Run MCMC sampling (CmdStan)
+Builds specified Stan models via CmdStanR, instantiates Whole_Output_Multi, and runs the single-drug fitting workflow (fitting, processing, and statistic generation). 
+
+```{r main, warning=FALSE, message=FALSE, results='hide'}
+
+#------------------------------
+# CmdStanR
+stan_model_drc <- cmdstanr::cmdstan_model(paste0("../stan/",params$model_drc,".stan"))
+stan_model_biphasic <- cmdstanr::cmdstan_model(paste0("../stan/",params$model_biphasic,".stan"))
+
+# Perform curve fitting by CmdStan sampling and processing of resultant data
+whole_output <- bayesyc::Whole_Output_Multi$new(whole_input, stan_model_drc, stan_model_biphasic, params, run_all=FALSE)
+whole_output$perform_fitting_multi()
+whole_output$process_fit_multi()
+whole_output$make_stats_multi()
+whole_output$make_plot_data_multi()
+# Save output RDS
+if(params$save_rds) saveRDS(whole_output, file=paste0(params$dir_out,"/whole_output.",params$out_name,".rds"))
+
+```
+
+## Output summary statistics of results
+
+```{r out_stats, warning=FALSE}
+
+# Output stats in CSV format
+out_stats_multi_ <- paste0(params$dir_out,"/stats.",params$out_name,".csv")
+write.table(whole_output$df_stats_multi, file=out_stats_multi_, sep=",", row.names=F, col.names=T, quote=F)
+
+```
+
+## Dose response curves
+Renders observed counts and model predictions per sample using ggplotly, adding ribbons for credible and prediction intervals when available.
+
+```{r plot_count_curves, fig.width=9.5, fig.height=5.5, warning=FALSE}
+
+# Show input files' info
+knitr::kable(df_files)
+
+#------------------------------
+# Plots
+l1 <- htmltools::tagList()
+for(s in seq(whole_output$ls_out_multi)){
+  no <- whole_output$ls_out_multi[[s]]$no
+  analysis <- whole_output$ls_out_multi[[s]]$analysis
+  specimen <- whole_output$ls_out_multi[[s]]$specimen
+  comp <- whole_output$ls_out_multi[[s]]$compound
+  df_obs <- whole_output$ls_out_multi[[s]]$df_obs
+  df_pred <- whole_output$ls_out_multi[[s]]$df_pred
+  v_metric <- unique(df_obs$metric)
+  v_idx <- which(whole_input$uniq_metrics %in% v_metric)
+
+  g1 <- ggplot(data=df_obs, aes(x=conc, y=y))
+  g1 <- g1 + theme_bw()
+  g1 <- g1 + geom_point(alpha=0.5, size=1, aes(colour=metric, label=well_info), show.legend=F)
+  if(!is.null(df_pred)){
+    # Show both credible and prediction interval
+    g1 <- g1 + geom_line(data=df_pred, aes(colour=metric, x=xx, y=u_median), alpha=0.70, show.legend=F)
+    g1 <- g1 + geom_ribbon(data=df_pred, aes(fill=metric, x=xx, y=u_median, ymax=u_upper, ymin=u_lower), alpha=0.10, show.legend=F) # credible interval
+    g1 <- g1 + geom_ribbon(data=df_pred, aes(fill=metric, x=xx, y=y_median, ymax=y_upper, ymin=y_lower), alpha=0.10, show.legend=F) # prediction interval
+  }
+  g1 <- g1 + scale_x_log10(labels = scales::label_number())
+  g1 <- g1 + scale_color_manual(values=glasbey(whole_input$n_uniq_metrics)[v_idx], breaks=v_metric)
+  g1 <- g1 + scale_fill_manual(values=glasbey(whole_input$n_uniq_metrics)[v_idx], breaks=v_metric)
+  g1 <- g1 + ggtitle(paste0(specimen, " , ", paste(no, analysis, sep=" "), " , ", comp))
+  g1 <- g1 + ylab("Count of cells") + xlab("Compound conc. [μM]")
+  pg1 <- ggplotly(g1)
+  pg1 <- bayesyc::modify_ggplotly_legend(pg1)
+  l1[[s]] <- as_widget(pg1)
+}
+l1
+
+```
+
+## Dose response curves
+### Treatment vs Control (%)
+Visualizes treatment-vs-control (%) across concentrations, including ribbons for credible intervals when available.
+
+```{r plot_tc_curves, fig.width=9.5, fig.height=5.5, warning=FALSE}
+
+# Show input files' info
+knitr::kable(df_files)
+
+#------------------------------
+# Plots
+l2 <- htmltools::tagList()
+
+y_max <- 150
+y_by <- 50
+
+for(s in seq(whole_output$ls_out_multi)){
+  no <- whole_output$ls_out_multi[[s]]$no
+  analysis <- whole_output$ls_out_multi[[s]]$analysis
+  specimen <- whole_output$ls_out_multi[[s]]$specimen
+  comp <- whole_output$ls_out_multi[[s]]$compound
+  df_obs <- whole_output$ls_out_multi[[s]]$df_obs
+  df_pred <- whole_output$ls_out_multi[[s]]$df_pred
+  v_metric <- unique(df_obs$metric)
+  v_idx <- which(whole_input$uniq_metrics %in% v_metric)
+
+  g2 <- ggplot(data=df_obs, aes(x=conc, y=tc))
+  g2 <- g2 + theme_bw()
+  g2 <- g2 + geom_point(alpha=0.5, size=1, aes(colour=metric, label=well_info), show.legend=F)
+  if(!is.null(df_pred)){
+    # Show credible interval
+    g2 <- g2 + geom_line(data=df_pred, aes(colour=metric, x=xx, y=tc_u_median), alpha=0.70, show.legend=F)
+    g2 <- g2 + geom_ribbon(data=df_pred, aes(fill=metric, x=xx, y=tc_u_median, ymax=tc_u_upper, ymin=tc_u_lower), alpha=0.20, show.legend=F) # credible interval
+  }
+  g2 <- g2 + scale_x_log10(labels = scales::label_number())
+  g2 <- g2 + coord_cartesian(ylim=c(0, y_max))
+  g2 <- g2 + scale_y_continuous(breaks=seq(0, y_max, by=y_by), labels = seq(0, y_max, by=y_by))
+  g2 <- g2 + scale_color_manual(values=glasbey(whole_input$n_uniq_metrics)[v_idx], breaks=v_metric)
+  g2 <- g2 + scale_fill_manual(values=glasbey(whole_input$n_uniq_metrics)[v_idx], breaks=v_metric)
+  g2 <- g2 + ggtitle(paste0(specimen, " , ", paste(no, analysis, sep=" "), " , ", comp))
+  g2 <- g2 + ylab("T/C [%]") + xlab("Compound conc. [μM]")
+  pg2 <- ggplotly(g2)
+  pg2 <- bayesyc::modify_ggplotly_legend(pg2)
+  l2[[s]] <- as_widget(pg2)
+}
+l2
+
+```
+
+## IC50 (Log)
+Extracts median and credible-interval estimates of IC50, plots them on a log scale with error bars and labels.
+
+```{r plot_ic50_point, fig.width=9.5, fig.height=5.5}
+
+# Show input files' info
+knitr::kable(df_files)
+
+#------------------------------
+# Plots
+l3 <- htmltools::tagList()
+for(s in seq(whole_output$ls_out_multi)){
+  no <- whole_output$ls_out_multi[[s]]$no
+  analysis <- whole_output$ls_out_multi[[s]]$analysis
+  specimen <- whole_output$ls_out_multi[[s]]$specimen
+  comp <- whole_output$ls_out_multi[[s]]$compound
+  xmin <- min(whole_output$ls_out_multi[[s]]$df_obs$conc) / 5
+  xmax <- max(whole_output$ls_out_multi[[s]]$df_obs$conc) * 5
+  df_ic50 <- whole_output$ls_out_multi[[s]]$df_ic50
+  df_ic50[df_ic50$`50%` == 0, "50%"] <- xmin / 10 # To avoid -Inf
+  v_metric <- unique(df_ic50$metric)
+  v_idx <- which(whole_input$uniq_metrics %in% v_metric)
+
+  g3 <- ggplot(df_ic50, aes(x=metric, y=`50%`, `2.5%`=`2.5%`, `97.5%`=`97.5%`, fill=metric, color=metric))
+  g3 <- g3 + theme_bw()
+  g3 <- g3 + geom_point(alpha=0.7, show.legend=F) # Median IC50
+  if(sum(!is.na(df_ic50$`97.5%`)) > 0){
+    g3 <- g3 + geom_errorbar(aes(ymin=`2.5%`, ymax=`97.5%`), width=0) # 95% credible interval
+  }
+  g3 <- g3 + geom_text(aes(label=text), size=3, y=log10(xmax)) # Text
+  g3 <- g3 + scale_color_manual(values=glasbey(whole_input$n_uniq_metrics)[v_idx], breaks=v_metric)
+  g3 <- g3 + scale_fill_manual(values=glasbey(whole_input$n_uniq_metrics)[v_idx], breaks=v_metric)
+  g3 <- g3 + scale_x_discrete(limits = rev)
+  g3 <- g3 + scale_y_log10(labels = scales::label_number())
+  g3 <- g3 + coord_flip(ylim=c(xmin, xmax))
+  g3 <- g3 + ggtitle(paste0(specimen, " , ", paste(no, analysis, sep=" "), " , ", comp))
+  g3 <- g3 + ylab("Estimated IC50 [μM]") + xlab("Compound")
+  pg3 <- ggplotly(g3, height=(185 + 28 * length(v_metric)))
+  l3[[s]] <- as_widget(pg3)
+}
+l3
+
+```

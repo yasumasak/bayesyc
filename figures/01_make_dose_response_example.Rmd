@@ -1,0 +1,345 @@
+---
+title: "Make dose response example"
+author: "Yasumasa Kimura"
+date: "`r Sys.Date()`"
+output: html_document
+params:
+---
+
+## Setup
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = FALSE)
+
+library(ggplot2)
+library(grid)
+library(gridExtra)
+library(dplyr)
+library(patchwork)
+
+prefix <- "figure_01."
+
+pow <- function(x, y) x^y
+  
+logistic4 <- function(d, E0, E1, C, h){
+    return( E1 + (E0 - E1) / (1 + pow(d/C, h)) );
+}
+
+bayesyc <- function(d1, d2, E0, E1, E2, E3, C1, C2, h1, h2, a12, a21, g12, g21, r1r, r2r){
+    
+  C1h1 = pow(C1,h1);
+  C2h2 = pow(C2,h2);
+  r1 = r1r/C1h1;
+  r2 = r2r/C2h2;
+  d1h1 = pow(d1,h1);
+  d2h2 = pow(d2,h2);
+  U=(r1*r2*pow((r1*C1h1),g21)*C1h1*C2h2+r1*r2*pow((r2*C2h2),g12)*C1h1*C2h2+pow(r1,(g21+1))*pow(a21*d1, g21*h1)*pow((r2*C2h2),g12)*C1h1+pow(r2,(g12+1))*pow(a12*d2, g12*h2)*pow((r1*C1h1),g21)*C2h2)/(d1h1*r1*r2*pow((r1*C1h1),g21)*C2h2+d1h1*r1*r2*pow((r2*C2h2),g12)*C2h2+d1h1*r1*pow(r2,(g12+1))*pow(a12*d2, g12*h2)*C2h2+d1h1*r1*pow(r2,g12)*pow(a12*d2, g12*h2)*pow((r1*C1h1),g21)+d1h1*pow(r1,(g21+1))*pow(r2,g12)*pow(a21*d1, g21*h1)*pow(a12*d2, g12*h2)+d1h1*pow(r1,(g21+1))*pow(a21*d1, g21*h1)*pow((r2*C2h2),g12)+d2h2*r1*r2*pow((r1*C1h1),g21)*C1h1+d2h2*r1*r2*pow((r2*C2h2),g12)*C1h1+d2h2*pow(r1,(g21+1))*r2*pow(a21*d1, g21*h1)*C1h1+d2h2*pow(r1,g21)*r2*pow(a21*d1, g21*h1)*pow((r2*C2h2),g12)+d2h2*pow(r1,g21)*pow(r2,(g12+1))*pow(a21*d1, g21*h1)*pow(a12*d2, g12*h2)+d2h2*pow(r2,(g12+1))*pow(a12*d2, g12*h2)*pow((r1*C1h1),g21)+r1*r2*pow((r1*C1h1),g21)*C1h1*C2h2+r1*r2*pow((r2*C2h2),g12)*C1h1*C2h2+pow(r1,(g21+1))*pow(a21*d1, g21*h1)*pow((r2*C2h2),g12)*C1h1+pow(r2,(g12+1))*pow(a12*d2, g12*h2)*pow((r1*C1h1),g21)*C2h2);
+  A1=(d1h1*r1*r2*pow((r1*C1h1),g21)*C2h2+d1h1*r1*r2*pow((r2*C2h2),g12)*C2h2+d1h1*pow(r1,(g21+1))*pow(a21*d1, g21*h1)*pow((r2*C2h2),g12)+d2h2*pow(r1,g21)*r2*pow(a21*d1, g21*h1)*pow((r2*C2h2),g12))/(d1h1*r1*r2*pow((r1*C1h1),g21)*C2h2+d1h1*r1*r2*pow((r2*C2h2),g12)*C2h2+d1h1*r1*pow(r2,(g12+1))*pow(a12*d2, g12*h2)*C2h2+d1h1*r1*pow(r2,g12)*pow(a12*d2, g12*h2)*pow((r1*C1h1),g21)+d1h1*pow(r1,(g21+1))*pow(r2,g12)*pow(a21*d1, g21*h1)*pow(a12*d2, g12*h2)+d1h1*pow(r1,(g21+1))*pow(a21*d1, g21*h1)*pow((r2*C2h2),g12)+d2h2*r1*r2*pow((r1*C1h1),g21)*C1h1+d2h2*r1*r2*pow((r2*C2h2),g12)*C1h1+d2h2*pow(r1,(g21+1))*r2*pow(a21*d1, g21*h1)*C1h1+d2h2*pow(r1,g21)*r2*pow(a21*d1, g21*h1)*pow((r2*C2h2),g12)+d2h2*pow(r1,g21)*pow(r2,(g12+1))*pow(a21*d1, g21*h1)*pow(a12*d2, g12*h2)+d2h2*pow(r2,(g12+1))*pow(a12*d2, g12*h2)*pow((r1*C1h1),g21)+r1*r2*pow((r1*C1h1),g21)*C1h1*C2h2+r1*r2*pow((r2*C2h2),g12)*C1h1*C2h2+pow(r1,(g21+1))*pow(a21*d1, g21*h1)*pow((r2*C2h2),g12)*C1h1+pow(r2,(g12+1))*pow(a12*d2, g12*h2)*pow((r1*C1h1),g21)*C2h2);
+  A2=(d1h1*r1*pow(r2,g12)*pow(a12*d2, g12*h2)*pow((r1*C1h1),g21)+d2h2*r1*r2*pow((r1*C1h1),g21)*C1h1+d2h2*r1*r2*pow((r2*C2h2),g12)*C1h1+d2h2*pow(r2,(g12+1))*pow(a12*d2, g12*h2)*pow((r1*C1h1),g21))/(d1h1*r1*r2*pow((r1*C1h1),g21)*C2h2+d1h1*r1*r2*pow((r2*C2h2),g12)*C2h2+d1h1*r1*pow(r2,(g12+1))*pow(a12*d2, g12*h2)*C2h2+d1h1*r1*pow(r2,g12)*pow(a12*d2, g12*h2)*pow((r1*C1h1),g21)+d1h1*pow(r1,(g21+1))*pow(r2,g12)*pow(a21*d1, g21*h1)*pow(a12*d2, g12*h2)+d1h1*pow(r1,(g21+1))*pow(a21*d1, g21*h1)*pow((r2*C2h2),g12)+d2h2*r1*r2*pow((r1*C1h1),g21)*C1h1+d2h2*r1*r2*pow((r2*C2h2),g12)*C1h1+d2h2*pow(r1,(g21+1))*r2*pow(a21*d1, g21*h1)*C1h1+d2h2*pow(r1,g21)*r2*pow(a21*d1, g21*h1)*pow((r2*C2h2),g12)+d2h2*pow(r1,g21)*pow(r2,(g12+1))*pow(a21*d1, g21*h1)*pow(a12*d2, g12*h2)+d2h2*pow(r2,(g12+1))*pow(a12*d2, g12*h2)*pow((r1*C1h1),g21)+r1*r2*pow((r1*C1h1),g21)*C1h1*C2h2+r1*r2*pow((r2*C2h2),g12)*C1h1*C2h2+pow(r1,(g21+1))*pow(a21*d1, g21*h1)*pow((r2*C2h2),g12)*C1h1+pow(r2,(g12+1))*pow(a12*d2, g12*h2)*pow((r1*C1h1),g21)*C2h2);
+    
+  return( U*E0 + A1*E1 + A2*E2 + (1-(U+A1+A2))*E3 );
+}
+
+
+synba <- function(d1, d2, E0, E1, E2, E3, C1, C2, h1, h2, a){
+  C1h1 = pow(C1,h1);
+  C2h2 = pow(C2,h2);
+  d1h1 = pow(d1,h1);
+  d2h2 = pow(d2,h2);
+  U = (C1h1*C2h2*E0 + d1h1*C2h2*E1 + C1h1*d2h2*E2 + a*d1h1*d2h2*E3) / (C1h1*C2h2 + d1h1*C2h2 + C1h1*d2h2 + a*d1h1*d2h2);
+  return( U );
+}
+
+```
+
+## Check single-drug logistic curve
+
+```{r check_with_logistic, include=FALSE}
+
+opts <- list()
+opts$v_conc <- c(0, 0.01, 0.1, 1, 10, 100)
+opts$ic50 <- 20
+opts$slope <- 1
+opts$min <- 33
+opts$alpha <- 100
+opts$beta <- 0.5
+
+opts$E0 <- 100
+opts$g12 <- 1
+opts$g21 <- 1
+opts$r1r <- 0.0001
+opts$r2r <- 0.0001
+
+# Check whether BayeSyC values with d2 = 0 are equal to Logistic values.
+d2 <- 0
+v_bayesyc <- NULL
+v_logistic <- NULL
+for (d1 in opts$v_conc){
+  beta <- opts$beta
+  E1 <- opts$min
+  E2 <- opts$min
+  E3 <- min(E1, E2) - beta * (opts$E0 - min(E1, E2))
+  C1 <- opts$ic50
+  C2 <- opts$ic50
+  h1 <- opts$slope
+  h2 <- opts$slope
+  a12 <- opts$alpha
+  a21 <- opts$alpha
+  m <- bayesyc(d1, d2, opts$E0, E1, E2, E3, C1, C2, h1, h2, a12, a21, opts$g12, opts$g21, opts$r1r, opts$r2r)
+  v_bayesyc <- c(v_bayesyc, m)
+  u <- logistic4(d1, opts$E0, E1, C1, h1)
+  v_logistic <- c(v_logistic, u)
+}
+
+```
+
+## Example single-drug dose response
+
+```{r example_logistic}
+
+opts <- list()
+opts$v_conc <- 10 ^ seq(-3, 3, 0.01)
+opts$ic50 <- 1
+opts$slope <- 1.2
+opts$min <- 33
+opts$E0 <- 100
+
+v_logistic <- NULL
+for (d1 in opts$v_conc){
+  beta <- opts$beta
+  E1 <- opts$min
+  C1 <- opts$ic50
+  h1 <- opts$slope
+  u <- logistic4(d1, opts$E0, E1, C1, h1)
+  v_logistic <- c(v_logistic, u)
+}
+
+rep_x <- c(10^-3, 1, 10^3)
+rep_points <- data.frame(
+  x = rep_x,
+  y = logistic4(rep_x, opts$E0, opts$min , opts$ic50, opts$slope),
+  label = factor(c("E0", "C1", "E1"), levels=c("E0", "C1", "E1"))
+)
+
+x_50 <- opts$ic50
+y_50 <- logistic4(opts$ic50, opts$E0, opts$min , opts$ic50, opts$slope)
+m <- (opts$E0 - opts$min) * opts$slope / (4 * opts$ic50)
+delta <- 7
+v_t <- c(1, 2, 3, 4, 5, 6, 7, 8, 9)
+
+df_plot <- data.frame(x = opts$v_conc, u = v_logistic)
+g <- ggplot(data=df_plot, aes(x=x, y=u))
+g <- g + theme_classic(base_size=12)
+g <- g + geom_line(size=1.2, alpha=0.5, color="black")
+g <- g + geom_point(data = rep_points, aes(x = x, y = y, color=label), size = 1.5)
+g <- g + scale_color_manual(values = c("green4", "red", "green4"))
+g <- g + scale_x_log10(breaks=c(v_t * 0.001, v_t * 0.01, v_t * 0.1, 
+                                v_t * 1, v_t * 10, v_t* 100, 1000))
+g <- g + ylab("Drug response") + xlab("log(d1)") 
+g <- g + annotate("segment",　x = x_50, y = -5, xend = x_50, yend = y_50, color = "red", linetype = "dotted")
+g <- g + annotate("segment",　x = x_50 / delta , y = y_50 + (log(delta) * m), xend = x_50 * delta, yend = y_50 - (log(delta) * m), color = "cyan1", alpha=0.8)
+
+g <- g + theme( axis.text.x = element_blank(), axis.text.y = element_blank(), legend.position = 'none' )
+g <- g + coord_cartesian(ylim=c(0, 100))
+g
+
+# Save in PDF
+out_pdf_ <- file.path(paste0(prefix, "example_logistic4.pdf"))
+pdf(file=out_pdf_, colormodel="cmyk", pointsize=7, paper="a4", width=0, height=0)
+tryCatch({
+  
+  grid.newpage() # make new blank figure
+  pushViewport(viewport(layout=grid.layout(6, 5)))
+  vp.1  = viewport(layout.pos.row=1, layout.pos.col=1:2)
+  print(g, vp=vp.1)
+  
+}, finally = { dev.off() }
+)
+
+
+```
+
+## Check Synba
+
+```{r check_with_synba, include=FALSE}
+
+opts <- list()
+opts$v_conc <- c(0, 0.01, 0.1, 1, 10, 100)
+opts$ic50 <- 20
+opts$slope <- 1
+opts$min <- 33
+opts$alpha <- 10
+opts$beta <- 0.5
+
+opts$E0 <- 100
+opts$g12 <- 1
+opts$g21 <- 1
+opts$r1r <- 1
+opts$r2r <- 1
+
+# Check whether BayeSyC values are equal to Synba values when Alpha12 = Alpha21.
+v_bayesyc <- NULL
+v_synba <- NULL
+for (d1 in opts$v_conc){
+  for (d2 in opts$v_conc){
+    beta <- opts$beta
+    E1 <- opts$min
+    E2 <- opts$min
+    E3 <- min(E1, E2) - beta * (opts$E0 - min(E1, E2))
+    C1 <- opts$ic50
+    C2 <- opts$ic50
+    h1 <- opts$slope
+    h2 <- opts$slope
+    a12 <- opts$alpha
+    a21 <- opts$alpha
+    m <- bayesyc(d1, d2, opts$E0, E1, E2, E3, C1, C2, h1, h2, a12, a21, opts$g12, opts$g21, opts$r1r, opts$r2r)
+    v_bayesyc <- c(v_bayesyc, m)
+    u <- synba(d1, d2, opts$E0, E1, E2, E3, C1, C2, h1, h2, opts$alpha)
+    v_synba <- c(v_synba, u)
+  }
+}
+sum(abs(v_bayesyc - v_synba))
+
+
+```
+
+## Example dose response contour of BayeSyC
+
+```{r example_contour_bayesyc}
+
+v_conc <- 10 ^ seq(-2, 2, 0.1)
+ic50 <- 1
+slope <- 1
+min <- 0
+v_alpha12 <- c(1, 1, 100, 100)
+v_alpha21 <- c(100, 1, 100, 1)
+beta <- 0
+
+E0 <- 100
+g12 <- 1
+g21 <- 1
+r1r <- 1
+r2r <- 1
+
+# Example data of BayeSyC
+ls_v_bayesyc <- NULL
+for (p in 1:4){
+  a12 <- v_alpha12[p]
+  a21 <- v_alpha21[p]
+  v_conc_1 <- NULL
+  v_conc_2 <- NULL
+  v_bayesyc <- NULL
+  v_synba <- NULL
+  for (d1 in v_conc){
+    for (d2 in v_conc){
+      E1 <- min
+      E2 <- min
+      E3 <- min(E1, E2) - beta * (E0 - min(E1, E2))
+      C1 <- ic50
+      C2 <- ic50
+      h1 <- slope
+      h2 <- slope
+      m <- bayesyc(d1, d2, E0, E1, E2, E3, C1, C2, h1, h2, a12, a21, g12, g21, r1r, r2r)
+      v_conc_1 <- c(v_conc_1, d1)
+      v_conc_2 <- c(v_conc_2, d2)
+      v_bayesyc <- c(v_bayesyc, m)
+    }
+  }
+  df_tmp <- data.frame(x=v_conc_1, y=v_conc_2, z=v_bayesyc)
+  ls_v_bayesyc[[p]] <- df_tmp
+}
+
+# Concentration points for comparison
+df_points <- data.frame(
+  x = c(10^-0.5, 10^-0.5, 1),
+  y = c(10^-0.5, 1, 10^-0.5)
+)
+
+# Baseline response is alpha12 = alpha21 = 1
+base_idx <- 2 
+df_base <- ls_v_bayesyc[[base_idx]] %>% group_by(x, y) %>% summarise(mean=mean(z), .groups="keep")
+
+# Response value z in the baseline
+df_points$z_base <- mapply(function(x,y) {
+  df_base$mean[which.min(abs(log10(df_base$x) - log10(x)) + abs(log10(df_base$y) - log10(y)))]
+}, df_points$x, df_points$y)
+
+arrow_colors <- c("deeppink", "red", "red")
+
+#------------------------------
+# Heatmap, contour and 3D surface plot
+ls_plots_obs <- NULL
+for(p in seq(ls_v_bayesyc)){
+  df_contour <- ls_v_bayesyc[[p]] %>% group_by(x,y) %>% summarise(mean=mean(z), .groups = "drop")
+
+  # Make data.frame for arrows showing changes from baseline 
+  if(p != base_idx){
+    # Arrow in x axis
+    arrows_df_x <- df_points %>%
+      rowwise() %>%
+      mutate(
+        x_end = df_contour$x[which.min(abs(log10(df_contour$mean) - log10(z_base)) + abs(log10(df_contour$y) - log10(y)))],
+        y_end = y
+      ) %>%
+      ungroup()
+    
+    # Arrow in y axis
+    arrows_df_y <- df_points %>%
+      rowwise() %>%
+      mutate(
+        x_end = x,
+        y_end = df_contour$y[which.min(abs(log10(df_contour$mean) - log10(z_base)) + abs(log10(df_contour$x) - log10(x)))]
+      ) %>%
+      ungroup()
+  }
+　arrows_df_x$color <- arrow_colors
+　arrows_df_y$color <- arrow_colors
+  
+  # plot
+  g1 <- ggplot(df_contour, aes(x, y))
+  g1 <- g1 + theme_bw(base_size=7)
+  g1 <- g1 + geom_contour_filled(aes(z=mean))
+  g1 <- g1 + scale_fill_brewer(palette="Spectral", direction=-1)
+  g1 <- g1 + geom_contour(aes(z=mean), colour="black", size=0.2)
+  g1 <- g1 + geom_hline(yintercept = 10^ seq(-2, 2, by = 0.5), color = "gray80", linetype = "dotted", linewidth=0.3)
+  g1 <- g1 + geom_vline(xintercept = 10^ seq(-2, 2, by = 0.5), color = "gray80", linetype = "dotted", linewidth=0.3)
+  g1 <- g1 + scale_x_continuous(expand=c(0,0), transform="log10", labels = scales::label_number())
+  g1 <- g1 + scale_y_continuous(expand=c(0,0), transform="log10", labels = scales::label_number())
+  g1 <- g1 + theme(legend.position = "none")
+  g1 <- g1 + xlab("Compound_1 [uM]") + ylab("Compound_2 [uM]") + ggtitle("")
+  g1 <- g1 + coord_fixed()
+  
+  # Arrows showing dose reduction
+  if(p != base_idx){
+    g1 <- g1 +
+      geom_segment(
+        data = arrows_df_x,
+        aes(x = x, y = y, xend = x_end, yend = y_end, color=color),
+        arrow = arrow(length = unit(0.2, "cm")),
+        alpha = 0.8, size = 0.8
+      ) +
+      geom_segment(
+        data = arrows_df_y,
+        aes(x = x, y = y, xend = x_end, yend = y_end, color=color),
+        arrow = arrow(length = unit(0.2, "cm")),
+        alpha = 0.8, size = 0.8
+      ) +
+      scale_color_identity()
+  }
+  
+  # Concentration points
+  g1 <- g1 + geom_point(data=df_points, aes(x, y), inherit.aes = FALSE, color="black", size=1.5)
+
+  ls_plots_obs <- c(ls_plots_obs, list(g1))
+}
+
+# Save in PDF
+grob <- marrangeGrob(ls_plots_obs, nrow=2, ncol=2)
+out_pdf_ <- file.path(paste0(prefix, "example_contour.bayesyc.pdf"))
+ggsave(out_pdf_, grob, device="pdf", width = 160, height = 150, units = "mm")
+grob
+
+```
+
+

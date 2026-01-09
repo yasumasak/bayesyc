@@ -1,0 +1,110 @@
+---
+title: "Compare synergy results"
+author: "Yasumasa Kimura"
+date: "`r Sys.Date()`"
+output: html_document
+params:
+---
+
+```{r setup, include=FALSE}
+library(ggplot2)
+library(grid)
+library(dplyr)
+
+library(showtext) # To show Greek characters
+showtext_auto() # To show Greek characters
+
+prefix <- "figure_06."
+setwd(dirname(rstudioapi::getSourceEditorContext()$path))
+
+```
+
+
+```{r load_data, warning=FALSE}
+
+# Threshold for setting category
+thre_alpha <- 5
+thre_beta <- 0.1
+
+# Load data
+dir_in <- "../output/patient_data"
+df_stats_bayesyc <- read.csv(file.path(dir_in, "stats.aza_ven_18.csv"), header=TRUE, sep=",", quote="", check.names=F, stringsAsFactors=F)
+
+# Set category: Synergy (1), Antagonistic (-1), or neither (0)
+df_stats_bayesyc$synergy_alpha12 <- ifelse(df_stats_bayesyc$`Alpha12 50%` < 1/thre_alpha & df_stats_bayesyc$`Alpha12 97.5%` < 1, -1, 
+                                         ifelse(df_stats_bayesyc$`Alpha12 50%` > thre_alpha & df_stats_bayesyc$`Alpha12 2.5%` > 1, 1, 0))
+df_stats_bayesyc$synergy_alpha21 <- ifelse(df_stats_bayesyc$`Alpha21 50%` < 1/thre_alpha & df_stats_bayesyc$`Alpha21 97.5%` < 1, -1, 
+                                         ifelse(df_stats_bayesyc$`Alpha21 50%` > thre_alpha & df_stats_bayesyc$`Alpha21 2.5%` > 1, 1, 0))
+df_stats_bayesyc$synergy_beta <- ifelse(df_stats_bayesyc$`Beta 50%` < -thre_beta & df_stats_bayesyc$`Beta 97.5%` < 0, -1, 
+                                      ifelse(df_stats_bayesyc$`Beta 50%` > thre_beta & df_stats_bayesyc$`Beta 2.5%` > 0, 1, 0))
+
+df_stats_aza_ven <- df_stats_bayesyc %>% dplyr::filter(Compound_1=="Azacitidine", Compound_2=="Venetoclax")
+
+```
+
+# Quantile values
+
+```{r load_data, warning=FALSE}
+
+cat("Alpha12\n")
+summary(df_stats_bayesyc$`Alpha12 50%`)
+cat("Alpha21\n")
+summary(df_stats_bayesyc$`Alpha21 50%`)
+cat("Beta\n")
+summary(df_stats_bayesyc$`Beta 50%`)
+
+```
+
+# Plot Synergy Aza - Ven
+
+```{r compare_synergy, warning=FALSE}
+
+out_pdf_ <- paste0(prefix, "synergy_status.patient.aza_ven.pdf")
+df_stats_interest <- df_stats_aza_ven
+
+# Output PDF
+pdf(file=out_pdf_, colormodel="cmyk", pointsize=7, paper="a4", width=0, height=0)
+tryCatch({
+
+  grid.newpage() # make new blank figure
+  pushViewport(viewport(layout=grid.layout(5, 3)))
+  
+  # Plot alpha12, alpha21, and beta
+  df_plot <- df_stats_aza_ven[, c("Alpha12 50%", "Alpha21 50%", "Beta 50%", 
+                                  "synergy_alpha12", "synergy_alpha21", "synergy_beta", "Specimen")] %>% 
+              dplyr::rename(median_alpha12="Alpha12 50%", median_alpha21="Alpha21 50%", median_beta="Beta 50%") %>% 
+              unique %>% 
+              tidyr::pivot_longer(cols=-"Specimen", names_to = c("measure", "parameter"),
+                                  names_sep = "_",  values_to = "value") %>%
+              tidyr::pivot_wider(names_from = measure, values_from = value)
+  df_plot[df_plot$parameter=="alpha12", "median"] <- log10(df_plot[df_plot$parameter=="alpha12", "median"])
+  df_plot[df_plot$parameter=="alpha21", "median"] <- log10(df_plot[df_plot$parameter=="alpha21", "median"])
+  sf_beta <- 2
+  df_plot[df_plot$parameter=="beta", "median"] <- sf_beta * df_plot[df_plot$parameter=="beta", "median"]
+
+  df_plot[df_plot$parameter=="alpha12", "parameter"] <- "α12"
+  df_plot[df_plot$parameter=="alpha21", "parameter"] <- "α21" 
+  df_plot[df_plot$parameter=="beta", "parameter"] <- "β"
+  
+  g3 <- ggplot(df_plot, aes(x = as.factor(parameter), y = median))
+  g3 <- g3 + theme_bw(base_size = 14)
+  g3 <- g3 + geom_boxplot(lwd=1, outlier.shape = NA, width = 0.5, alpha = 0.7)
+  g3 <- g3 + geom_point(aes(color=factor(synergy, levels=c(-1, 0, 1)), fill=factor(synergy, levels=c(-1, 0, 1))), size = 2, alpha = 0.6)
+  g3 <- g3 + scale_color_manual(values=c("green", "gray20", "red"))
+  g3 <- g3 + scale_fill_manual(values=c("green", "gray20", "red"))
+  g3 <- g3 + geom_line(aes(group = Specimen), color = "gray30", alpha = 0.7)
+  g3 <- g3 + scale_y_continuous(breaks=c(-3, -2, -1, 0, 1, 2, 3), 
+                                labels=c("0.001", "0.01", "0.1", "1", "10", "100", "1000"), 
+                                name="α",
+                                sec.axis = sec_axis(~ . / sf_beta, name = "β")
+                           )
+  g3 <- g3 + theme(legend.position = "none") +  labs(title = "Azacitidine + Venetoclax", x = "Parameter", y = "α")
+  g3
+  vp.3  = viewport(layout.pos.row=1:2, layout.pos.col=1:2)
+  print(g3, vp=vp.3)
+  
+  
+}, finally = { dev.off() }
+)
+  
+```

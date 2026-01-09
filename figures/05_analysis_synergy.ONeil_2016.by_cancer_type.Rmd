@@ -1,0 +1,490 @@
+---
+title: "Analyze synergy results on ONeil 2016 data"
+author: "Yasumasa Kimura"
+date: "`r Sys.Date()`"
+output: html_document
+params:
+---
+
+```{r setup, include=FALSE}
+library(ggplot2)
+library(grid)
+library(dplyr)
+
+prefix <- "figure_05."
+setwd(dirname(rstudioapi::getSourceEditorContext()$path))
+
+```
+
+
+```{r load_data, warning=FALSE}
+# Load data
+dir_result_ <- "../output/ONeil_2016"
+
+# Threshold for setting category
+thre_alpha <- 5
+thre_beta <- 0.1
+
+#------------------------------
+# SynBa result
+rds_df_stats_synba_ <- file.path(dir_result_, "./df_stats.synba.ONeil_2016.rds")
+
+if(file.exists(rds_df_stats_synba_)){
+  df_stats_synba <- readRDS(rds_df_stats_synba_) 
+}else{
+  df_stats_synba <- NULL
+  for(i in 1:583){
+    stats_ <- paste0(dir_result_, "/output.synba_combo/stats.synergy.ONeil_2016.",i,".synba_combo.csv")
+    df_stats <- read.csv(stats_, header=TRUE, sep=",", quote="", check.names=F, stringsAsFactors=F)
+    df_stats$combination_idx <- i
+    if(is.null(df_stats_synba)){
+      df_stats_synba <- df_stats
+    }else{
+      df_stats_synba <- rbind(df_stats_synba, df_stats)
+    }
+  }
+  saveRDS(df_stats_synba, file=rds_df_stats_synba_)
+}
+
+# Categorize: Synergistic (S), Antagonistic (A), or Neither (N)
+df_stats_synba$synergy_alpha <- ifelse(df_stats_synba$`Alpha 50%` < 1/thre_alpha & df_stats_synba$`Alpha 97.5%` < 1, "A", 
+                                       ifelse(df_stats_synba$`Alpha 50%` > thre_alpha & df_stats_synba$`Alpha 2.5%` > 1, "S", "N"))
+df_stats_synba$synergy_beta <- ifelse(df_stats_synba$`Beta 50%` < -thre_beta & df_stats_synba$`Beta 97.5%` < 0, "A", 
+                                      ifelse(df_stats_synba$`Beta 50%` > thre_beta & df_stats_synba$`Beta 2.5%` > 0, "S", "N"))
+
+v_id_synba <- paste(df_stats_synba[, 1], df_stats_synba[, 2], df_stats_synba[, 3], sep="_")
+
+
+
+#------------------------------
+# BayeSyC_gamma result
+rds_df_stats_bayesyc_ <- file.path(dir_result_, "./df_stats.bayesyc-i_gamma.ONeil_2016.rds")
+
+if(file.exists(rds_df_stats_bayesyc_)){
+  df_stats_bayesyc <- readRDS(rds_df_stats_bayesyc_) 
+}else{
+  df_stats_bayesyc <- NULL
+  for(i in 1:583){
+    stats_ <- paste0(dir_result_, "/output.bayesyc-i_gamma/stats.synergy.ONeil_2016.",i,".bayesyc-i_gamma.csv")
+    df_stats <- read.csv(stats_, header=TRUE, sep=",", quote="", check.names=F, stringsAsFactors=F)
+    df_stats$combination_idx <- i
+    if(is.null(df_stats_bayesyc)){
+      df_stats_bayesyc <- df_stats
+    }else{
+      df_stats_bayesyc <- rbind(df_stats_bayesyc, df_stats)
+    }
+  }
+  saveRDS(df_stats_bayesyc, file=rds_df_stats_bayesyc_)
+}
+
+# Categorize: Synergistic (S), Antagonistic (A), or Neither (N)
+df_stats_bayesyc$synergy_alpha12 <- ifelse(df_stats_bayesyc$`Alpha12 50%` < 1/thre_alpha & df_stats_bayesyc$`Alpha12 97.5%` < 1, "A", 
+                                         ifelse(df_stats_bayesyc$`Alpha12 50%` > thre_alpha & df_stats_bayesyc$`Alpha12 2.5%` > 1, "S", "N"))
+df_stats_bayesyc$synergy_alpha21 <- ifelse(df_stats_bayesyc$`Alpha21 50%` < 1/thre_alpha & df_stats_bayesyc$`Alpha21 97.5%` < 1, "A", 
+                                         ifelse(df_stats_bayesyc$`Alpha21 50%` > thre_alpha & df_stats_bayesyc$`Alpha21 2.5%` > 1, "S", "N"))
+df_stats_bayesyc$synergy_beta <- ifelse(df_stats_bayesyc$`Beta 50%` < -thre_beta & df_stats_bayesyc$`Beta 97.5%` < 0, "A", 
+                                      ifelse(df_stats_bayesyc$`Beta 50%` > thre_beta & df_stats_bayesyc$`Beta 2.5%` > 0, "S", "N"))
+
+v_id_bayesyc <- paste(df_stats_bayesyc[, 1], df_stats_bayesyc[, 2], df_stats_bayesyc[, 3], sep="_")
+
+
+# Check rows of the data.frames are the same.
+sum(v_id_bayesyc != v_id_synba)
+
+# Filter by success of fit
+df_stats_bayesyc <- df_stats_bayesyc %>% filter(`Success of fit`)
+df_stats_synba <- df_stats_synba %>% filter(`Success of fit`)
+
+
+```
+
+# Cancer type
+# Drug type
+
+```{r cancer_type, warning=FALSE}
+
+# Load data
+cellline_info_ <- "./ONeil_2016.cellline_info.txt"
+df_cellline_info <- read.csv(cellline_info_, header=F, sep="\t", quote="", stringsAsFactors=F)
+v_cancer_type <- c(NA, "Melanoma", "Ovarian Cancer", "Lung Cancer", "Colorectal Cancer", "Breast Cancer")
+
+
+drug_info_ <- "./ONeil_2016.drug_category.txt"
+df_drug_info <- read.csv(drug_info_, header=F, sep="\t", quote="", stringsAsFactors=F)
+
+v_compound_class <- df_drug_info$V2
+names(v_compound_class) <- df_drug_info$V1
+
+v_group_colors <- c("DNA synthesis & damage"="dodgerblue", "Epigenetic regulators"="green3", "Kinases"="orange2", 
+                    "Mitotic checkpoint"="purple1", "Receptors & channels"="red1", "Signaling modulators"="yellow3")
+
+my_palette <- colorRampPalette(c("blue", "white", "red"))(100)
+
+col_fun <- circlize::colorRamp2(
+  breaks = c(-39, 0, 39),
+  colors = c("blue", "white", "red")
+)
+
+```
+
+# Heatmap of synergistic potency Alpha
+
+```{r synergistic_alpha, warning=FALSE}
+
+
+out_pdf_ <- paste0(prefix, "heatmap.synergy_alpha.ONeil_2016.by_cancer_type.pdf")
+
+# Output PDF
+pdf(file=out_pdf_, colormodel="cmyk", pointsize=7, width=9, height=7)
+tryCatch({
+
+  #------------------------------
+  # BayeSyC
+  for(cancer_type in v_cancer_type){
+   
+    if(is.na(cancer_type)){
+      df <- df_stats_bayesyc %>% arrange(Compound_1, Compound_2)
+    }else{
+      v_cellline <- (df_cellline_info %>% dplyr::filter(V2==cancer_type))[, 1]
+      df <- df_stats_bayesyc %>% dplyr::filter(Specimen %in% v_cellline) %>% arrange(Compound_1, Compound_2)
+    }
+    
+    df_count_category_bayesyc_alpha12 <- df %>% group_by(Compound_1, Compound_2, synergy_alpha12) %>% 
+                               dplyr::summarise(count = n(), .groups="keep") %>% 
+                               tidyr::pivot_wider(names_from=synergy_alpha12, values_from=count, values_fill=list(count=0))
+    # score (count of synergy - count of antagonism)
+    df_count_category_bayesyc_alpha12$score <- df_count_category_bayesyc_alpha12$S - df_count_category_bayesyc_alpha12$A
+    
+    df_count_category_bayesyc_alpha21 <- df %>% group_by(Compound_1, Compound_2, synergy_alpha21) %>% 
+                               dplyr::summarise(count = n(), .groups="keep") %>% 
+                               tidyr::pivot_wider(names_from=synergy_alpha21, values_from=count, values_fill=list(count=0))
+    # score (count of synergy - count of antagonism)
+    df_count_category_bayesyc_alpha21$score <- df_count_category_bayesyc_alpha21$S - df_count_category_bayesyc_alpha21$A
+    df_count_category_bayesyc_alpha21_swap <- df_count_category_bayesyc_alpha21
+    df_count_category_bayesyc_alpha21_swap$Compound_1 <- df_count_category_bayesyc_alpha21$Compound_2
+    df_count_category_bayesyc_alpha21_swap$Compound_2 <- df_count_category_bayesyc_alpha21$Compound_1
+    
+    # Combine Alpha12 and Alpha21
+    # Scores of all the combinations are Compound_1 --> Compound_2
+    df_score_category_bayesyc_alpha <- rbind(df_count_category_bayesyc_alpha12, df_count_category_bayesyc_alpha21_swap)
+
+    # Wide format with socres as their values
+    df_score_bayesyc_alpha <- df_score_category_bayesyc_alpha %>% tidyr::pivot_wider(id_cols=Compound_1, names_from=Compound_2, values_from=score, names_sort = TRUE)
+    # Matrix format
+    mx_score_bayesyc_alpha <- df_score_bayesyc_alpha[, -1]
+    rownames(mx_score_bayesyc_alpha) <- df_score_bayesyc_alpha %>% pull(Compound_1)
+    mx_score_bayesyc_alpha <- apply(mx_score_bayesyc_alpha, c(1, 2), as.numeric)
+    mx_score_bayesyc_alpha <- mx_score_bayesyc_alpha[order(rownames(mx_score_bayesyc_alpha)), order(colnames(mx_score_bayesyc_alpha))]
+    
+    if(is.na(cancer_type)){
+      # Using ALL cancer types
+      # Sum of N, A, S, score for annotation
+      df_sum_category_bayesyc_alpha <- df_score_category_bayesyc_alpha %>% group_by(Compound_1) %>%
+                                       dplyr::summarise(across(c(N, A, S, score), sum))
+      df_sum_category_bayesyc_alpha <- df_sum_category_bayesyc_alpha[order(df_sum_category_bayesyc_alpha$score, decreasing=T), ]
+      v_sorted_comound <- df_sum_category_bayesyc_alpha$Compound_1
+      mx_score_bayesyc_alpha_all <- mx_score_bayesyc_alpha[v_sorted_comound, v_sorted_comound]
+      
+      # By ComplexHeatmap
+      row_annot_alpha <- ComplexHeatmap::rowAnnotation(
+                           Category = v_compound_class[df_sum_category_bayesyc_alpha$Compound_1],
+                           col = list(Category = v_group_colors),
+                           show_annotation_name=FALSE, show_legend=TRUE,
+                           gp = gpar(fontsize=9),
+                           annotation_name_side = "top"
+      )
+      
+      ht <- ComplexHeatmap::Heatmap(mx_score_bayesyc_alpha_all, col=col_fun, 
+                                    name = "BayeSyC ALL",
+                                    right_annotation = row_annot_alpha,
+                                    row_names_gp = gpar(fontsize = 9), column_names_gp = gpar(fontsize = 9),
+                                    cluster_rows = FALSE, cluster_columns = FALSE,  
+                                    cell_fun = function(j, i, x, y, width, height, fill) {
+                                                 grid.rect(x, y, width, height, gp = gpar(col="gray70", fill = NA, lwd = 0.5))
+                                               }
+      )
+      ComplexHeatmap::draw(ht)
+
+    }else{
+      # Using one cancer type
+      # v_sorted_comound is from "ALL".
+      mx_score_bayesyc_alpha <- mx_score_bayesyc_alpha[v_sorted_comound, v_sorted_comound]
+      # By ComplexHeatmap
+      ht <- ComplexHeatmap::Heatmap(mx_score_bayesyc_alpha, col=col_fun, 
+                                    name = paste("BayeSyC", cancer_type),
+                                    right_annotation = row_annot_alpha,
+                                    row_names_gp = gpar(fontsize = 9), column_names_gp = gpar(fontsize = 9),
+                                    cluster_rows = FALSE, cluster_columns = FALSE,  
+                                    cell_fun = function(j, i, x, y, width, height, fill) {
+                                                 grid.rect(x, y, width, height, gp = gpar(col="gray70", fill = NA, lwd = 0.5))
+                                               }
+      )
+      ComplexHeatmap::draw(ht)
+    }
+  }
+  
+  
+  #------------------------------
+  # SynBa
+  for(cancer_type in v_cancer_type){
+   
+    if(is.na(cancer_type)){
+      df <- df_stats_synba %>% arrange(Compound_1, Compound_2)
+    }else{
+      v_cellline <- (df_cellline_info %>% dplyr::filter(V2==cancer_type))[, 1]
+      df <- df_stats_synba %>% dplyr::filter(Specimen %in% v_cellline) %>% arrange(Compound_1, Compound_2)
+    }
+    
+    df_count_category_synba_alpha <- df %>% group_by(Compound_1, Compound_2, synergy_alpha) %>% 
+                               dplyr::summarise(count = n(), .groups="keep") %>% 
+                               tidyr::pivot_wider(names_from=synergy_alpha, values_from=count, values_fill=list(count=0))
+    df_count_category_synba_alpha$score <- df_count_category_synba_alpha$S - df_count_category_synba_alpha$A
+    
+    df_count_category_synba_alpha_swap <- df_count_category_synba_alpha
+    df_count_category_synba_alpha_swap$Compound_1 <- df_count_category_synba_alpha$Compound_2
+    df_count_category_synba_alpha_swap$Compound_2 <- df_count_category_synba_alpha$Compound_1
+    
+    # Combine with reverse combinations
+    # Scores of all the combinations are Compound_1 --> Compound_2
+    df_score_category_synba_alpha <- rbind(df_count_category_synba_alpha, df_count_category_synba_alpha_swap)
+
+    # Wide format with socres as their values
+    df_score_synba_alpha <- df_score_category_synba_alpha %>% tidyr::pivot_wider(id_cols=Compound_1, names_from=Compound_2, values_from=score, names_sort = TRUE)
+    # Matrix format
+    mx_score_synba_alpha <- df_score_synba_alpha[, -1]
+    rownames(mx_score_synba_alpha) <- df_score_synba_alpha %>% pull(Compound_1)
+    mx_score_synba_alpha <- apply(mx_score_synba_alpha, c(1, 2), as.numeric)
+    mx_score_synba_alpha <- mx_score_synba_alpha[order(rownames(mx_score_synba_alpha)), order(colnames(mx_score_synba_alpha))]
+    
+    if(is.na(cancer_type)){
+      # Using ALL cancer types
+      # v_sorted_comound is from "ALL" in BayeSyC.
+      mx_score_synba_alpha_all <- mx_score_synba_alpha[v_sorted_comound, v_sorted_comound]
+            
+      # By ComplexHeatmap
+      ht <- ComplexHeatmap::Heatmap(mx_score_synba_alpha_all, col=col_fun, 
+                                    name = "SynBa ALL",
+                                    right_annotation = row_annot_alpha,
+                                    row_names_gp = gpar(fontsize = 9), column_names_gp = gpar(fontsize = 9),
+                                    cluster_rows = FALSE, cluster_columns = FALSE,  
+                                    cell_fun = function(j, i, x, y, width, height, fill) {
+                                                 grid.rect(x, y, width, height, gp = gpar(col="gray70", fill = NA, lwd = 0.5))
+                                               }
+      )
+      ComplexHeatmap::draw(ht)
+
+    }else{
+      # Using one cancer type
+      # v_sorted_comound is from "ALL" in BayeSyC.
+      mx_score_synba_alpha <- mx_score_synba_alpha[v_sorted_comound, v_sorted_comound]
+      # By ComplexHeatmap
+      ht <- ComplexHeatmap::Heatmap(mx_score_synba_alpha, col=col_fun, 
+                                    name = paste("SynBa", cancer_type),
+                                    right_annotation = row_annot_alpha,
+                                    row_names_gp = gpar(fontsize = 9), column_names_gp = gpar(fontsize = 9),
+                                    cluster_rows = FALSE, cluster_columns = FALSE,  
+                                    cell_fun = function(j, i, x, y, width, height, fill) {
+                                                 grid.rect(x, y, width, height, gp = gpar(col="gray70", fill = NA, lwd = 0.5))
+                                               }
+      )
+      ComplexHeatmap::draw(ht)
+    }
+  }
+  
+  # Difference
+  mx_score_diff_alpha_all <- mx_score_bayesyc_alpha_all - mx_score_synba_alpha_all
+  ht <- ComplexHeatmap::Heatmap(mx_score_diff_alpha_all, col=col_fun, 
+                                name = "BayeSyC - SynBa ALL",
+                                right_annotation = row_annot_alpha,
+                                row_names_gp = gpar(fontsize = 9), column_names_gp = gpar(fontsize = 9),
+                                cluster_rows = FALSE, cluster_columns = FALSE,  
+                                cell_fun = function(j, i, x, y, width, height, fill) {
+                                             grid.rect(x, y, width, height, gp = gpar(col="gray70", fill = NA, lwd = 0.5))
+                                           }
+  )
+  ComplexHeatmap::draw(ht)
+      
+}, finally = { dev.off() }
+)
+
+```
+
+# Heatmap of synergistic efficacy Beta
+
+```{r synergistic_beta, warning=FALSE}
+
+out_pdf_ <- paste0(prefix, "heatmap.synergy_beta.ONeil_2016.by_cancer_type.pdf")
+
+# Output PDF
+pdf(file=out_pdf_, colormodel="cmyk", pointsize=7, width=9, height=7)
+tryCatch({
+
+  #------------------------------
+  # BayeSyC
+  for(cancer_type in v_cancer_type){
+
+    if(is.na(cancer_type)){
+      df <- df_stats_bayesyc %>% arrange(Compound_1, Compound_2)
+    }else{
+      v_cellline <- (df_cellline_info %>% dplyr::filter(V2==cancer_type))[, 1]
+      df <- df_stats_bayesyc %>% dplyr::filter(Specimen %in% v_cellline) %>% arrange(Compound_1, Compound_2)
+    }
+    
+    df_count_category_bayesyc_beta1 <- df %>% group_by(Compound_1, Compound_2,　synergy_beta) %>% 
+                               dplyr::summarise(count = n(), .groups="keep") %>% 
+                               tidyr::pivot_wider(names_from=synergy_beta, values_from=count, values_fill=list(count=0))
+    df_count_category_bayesyc_beta1$score <- df_count_category_bayesyc_beta1$S - df_count_category_bayesyc_beta1$A
+    
+    df_count_category_bayesyc_beta2 <- df %>% group_by(Compound_1, Compound_2, synergy_beta) %>% 
+                               dplyr::summarise(count = n(), .groups="keep") %>% 
+                               tidyr::pivot_wider(names_from=synergy_beta, values_from=count, values_fill=list(count=0))
+    df_count_category_bayesyc_beta2$score <- df_count_category_bayesyc_beta2$S - df_count_category_bayesyc_beta2$A
+    
+    df_count_category_bayesyc_beta2_swap <- df_count_category_bayesyc_beta2
+    df_count_category_bayesyc_beta2_swap$Compound_1 <- df_count_category_bayesyc_beta2$Compound_2
+    df_count_category_bayesyc_beta2_swap$Compound_2 <- df_count_category_bayesyc_beta2$Compound_1
+        
+    df_score_category_bayesyc_beta <- rbind(df_count_category_bayesyc_beta1, df_count_category_bayesyc_beta2_swap)
+        
+    df_score_bayesyc_beta <- df_score_category_bayesyc_beta %>% tidyr::pivot_wider(id_cols=Compound_1, names_from=Compound_2, values_from=score, names_sort = TRUE)
+        
+    mx_score_bayesyc_beta <- df_score_bayesyc_beta[, -1]
+    rownames(mx_score_bayesyc_beta) <- df_score_bayesyc_beta %>% pull(Compound_1)
+    mx_score_bayesyc_beta <- apply(mx_score_bayesyc_beta, c(1, 2), as.numeric)
+    mx_score_bayesyc_beta <- mx_score_bayesyc_beta[order(rownames(mx_score_bayesyc_beta)), order(colnames(mx_score_bayesyc_beta))]
+        
+    
+    if(is.na(cancer_type)){
+      # Using ALL cancer types
+      # Sum of N, A, S, score for annotation
+      df_sum_category_bayesyc_beta <- df_score_category_bayesyc_beta %>% group_by(Compound_1) %>% dplyr::summarise(across(c(N, A, S, score), sum))
+      df_sum_category_bayesyc_beta <- df_sum_category_bayesyc_beta[order(df_sum_category_bayesyc_beta$score, decreasing=T), ]
+      v_sorted_comound <- df_sum_category_bayesyc_beta$Compound_1
+      mx_score_bayesyc_beta_all <- mx_score_bayesyc_beta[v_sorted_comound, v_sorted_comound]
+
+      # By ComplexHeatmap
+      row_annot_alpha <- ComplexHeatmap::rowAnnotation(
+                           Category = v_compound_class[df_sum_category_bayesyc_beta$Compound_1],
+                           col = list(Category = v_group_colors),
+                           show_annotation_name=FALSE, show_legend=TRUE,
+                           gp = gpar(fontsize=9),
+                           annotation_name_side = "top"
+      )
+      
+      ht <- ComplexHeatmap::Heatmap(mx_score_bayesyc_beta_all, col=col_fun, 
+                                    name = "BayeSyC ALL",
+                                    right_annotation = row_annot_alpha,
+                                    row_names_gp = gpar(fontsize = 9), column_names_gp = gpar(fontsize = 9),
+                                    cluster_rows = FALSE, cluster_columns = FALSE,  
+                                    cell_fun = function(j, i, x, y, width, height, fill) {
+                                                 grid.rect(x, y, width, height, gp = gpar(col="gray70", fill = NA, lwd = 0.5))
+                                               }
+      )
+      ComplexHeatmap::draw(ht)
+      
+    }else{
+      # Using one cancer type
+      # v_sorted_comound is from "ALL".
+      mx_score_bayesyc_beta <- mx_score_bayesyc_beta[v_sorted_comound, v_sorted_comound]
+      # By ComplexHeatmap
+      ht <- ComplexHeatmap::Heatmap(mx_score_bayesyc_beta, col=col_fun, 
+                                    name = paste("BayeSyC", cancer_type),
+                                    right_annotation = row_annot_alpha,
+                                    row_names_gp = gpar(fontsize = 9), column_names_gp = gpar(fontsize = 9),
+                                    cluster_rows = FALSE, cluster_columns = FALSE,  
+                                    cell_fun = function(j, i, x, y, width, height, fill) {
+                                                 grid.rect(x, y, width, height, gp = gpar(col="gray70", fill = NA, lwd = 0.5))
+                                               }
+      )
+      ComplexHeatmap::draw(ht)
+    }
+  }
+  
+  #------------------------------
+  # SynBa
+  for(cancer_type in v_cancer_type){
+
+    if(is.na(cancer_type)){
+      df <- df_stats_synba %>% arrange(Compound_1, Compound_2)
+    }else{
+      v_cellline <- (df_cellline_info %>% dplyr::filter(V2==cancer_type))[, 1]
+      df <- df_stats_synba %>% dplyr::filter(Specimen %in% v_cellline) %>% arrange(Compound_1, Compound_2)
+    }
+    
+    df_count_category_synba_beta1 <- df %>% group_by(Compound_1, Compound_2,　synergy_beta) %>% 
+                               dplyr::summarise(count = n(), .groups="keep") %>% 
+                               tidyr::pivot_wider(names_from=synergy_beta, values_from=count, values_fill=list(count=0))
+    df_count_category_synba_beta1$score <- df_count_category_synba_beta1$S - df_count_category_synba_beta1$A
+    
+    df_count_category_synba_beta2 <- df %>% group_by(Compound_1, Compound_2, synergy_beta) %>% 
+                               dplyr::summarise(count = n(), .groups="keep") %>% 
+                               tidyr::pivot_wider(names_from=synergy_beta, values_from=count, values_fill=list(count=0))
+    df_count_category_synba_beta2$score <- df_count_category_synba_beta2$S - df_count_category_synba_beta2$A
+    
+    df_count_category_synba_beta2_swap <- df_count_category_synba_beta2
+    df_count_category_synba_beta2_swap$Compound_1 <- df_count_category_synba_beta2$Compound_2
+    df_count_category_synba_beta2_swap$Compound_2 <- df_count_category_synba_beta2$Compound_1
+        
+    df_score_category_synba_beta <- rbind(df_count_category_synba_beta1, df_count_category_synba_beta2_swap)
+        
+    df_score_synba_beta <- df_score_category_synba_beta %>% tidyr::pivot_wider(id_cols=Compound_1, names_from=Compound_2, values_from=score, names_sort = TRUE)
+        
+    mx_score_synba_beta <- df_score_synba_beta[, -1]
+    rownames(mx_score_synba_beta) <- df_score_synba_beta %>% pull(Compound_1)
+    mx_score_synba_beta <- apply(mx_score_synba_beta, c(1, 2), as.numeric)
+    mx_score_synba_beta <- mx_score_synba_beta[order(rownames(mx_score_synba_beta)), order(colnames(mx_score_synba_beta))]
+        
+    
+    if(is.na(cancer_type)){
+      # Using ALL cancer types
+      # v_sorted_comound is from "ALL" in BayeSyC.
+      mx_score_synba_beta_all <- mx_score_synba_beta[v_sorted_comound, v_sorted_comound]
+      # By ComplexHeatmap
+      ht <- ComplexHeatmap::Heatmap(mx_score_synba_beta_all, col=col_fun, 
+                                    name = "SynBa ALL",
+                                    right_annotation = row_annot_alpha,
+                                    row_names_gp = gpar(fontsize = 9), column_names_gp = gpar(fontsize = 9),
+                                    cluster_rows = FALSE, cluster_columns = FALSE,  
+                                    cell_fun = function(j, i, x, y, width, height, fill) {
+                                                 grid.rect(x, y, width, height, gp = gpar(col="gray70", fill = NA, lwd = 0.5))
+                                               }
+      )
+      ComplexHeatmap::draw(ht)
+
+    }else{
+      # Using one cancer type
+      # v_sorted_comound is from "ALL" in BayeSyC.
+      mx_score_synba_beta <- mx_score_synba_beta[v_sorted_comound, v_sorted_comound]
+      # By ComplexHeatmap
+      ht <- ComplexHeatmap::Heatmap(mx_score_synba_beta, col=col_fun, 
+                                    name = paste("SynBa", cancer_type),
+                                    right_annotation = row_annot_alpha,
+                                    row_names_gp = gpar(fontsize = 9), column_names_gp = gpar(fontsize = 9),
+                                    cluster_rows = FALSE, cluster_columns = FALSE,  
+                                    cell_fun = function(j, i, x, y, width, height, fill) {
+                                                 grid.rect(x, y, width, height, gp = gpar(col="gray70", fill = NA, lwd = 0.5))
+                                               }
+      )
+      ComplexHeatmap::draw(ht)
+    }
+    
+  }
+  
+  # Difference
+  mx_score_diff_beta_all <- mx_score_bayesyc_beta_all - mx_score_synba_beta_all
+  ht <- ComplexHeatmap::Heatmap(mx_score_diff_beta_all, col=col_fun, 
+                                name = "BayeSyC - SynBa ALL",
+                                right_annotation = row_annot_alpha,
+                                row_names_gp = gpar(fontsize = 9), column_names_gp = gpar(fontsize = 9),
+                                cluster_rows = FALSE, cluster_columns = FALSE,  
+                                cell_fun = function(j, i, x, y, width, height, fill) {
+                                             grid.rect(x, y, width, height, gp = gpar(col="gray70", fill = NA, lwd = 0.5))
+                                           }
+  )
+  ComplexHeatmap::draw(ht)
+  
+}, finally = { dev.off() }
+)
+
+```
+

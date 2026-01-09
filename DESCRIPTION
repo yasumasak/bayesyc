@@ -1,0 +1,32 @@
+Package: bayesyc
+Type: Package
+Title: BayeSyC: robust Bayesian modeling captures bidirectional synergistic potency in drug combinations 
+Version: 0.1.0
+Author: Yasumasa Kimura
+Authors@R: person("Yasumasa", "Kimura", email = "yasumasa.kimura@daiichisankyo.com", role = c("aut", "cre"))
+Maintainer: Yasumasa Kimura <y.kimura.sc@gmail.com>
+Description: BayeSyC is a Bayesian framework for estimating synergistic efficacy
+    and bidirectional synergistic potency, enabling interpretable and robust analysis
+    of drug combinations. This package also provides functions for preprocessing 
+    dose-response data and generating summaries and visualizations of model fits.
+License: MIT + file LICENSE
+Encoding: UTF-8
+LazyData: true
+Suggests: 
+    knitr,
+    rmarkdown,
+    htmltools,
+    ggplot2,
+    gridExtra,
+    pals,
+    plotly,
+    formattable
+VignetteBuilder: knitr
+RoxygenNote: 7.3.3
+Config/testthat/edition: 3
+Imports: 
+    R6,
+    dplyr,
+    tidyr,
+    cmdstanr,
+    loo
