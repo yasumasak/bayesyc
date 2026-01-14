@@ -58,7 +58,7 @@ df_single <- read.csv(file.path(params$dir_in,"ONeil_MolCancerTher_2016_15_6_115
 
 # Print parameters
 model <- basename(params$model_bayesyc)
-out_params_ <- paste0(params$dir_out, "/params.synergy.",params$out_name,".",model,".csv")
+out_params_ <- paste0(params$dir_out, "/params.synergy.",params$out_name,".",model,".tsv")
 sink(out_params_)
 for(p in names(params)){
   cat(p,"\t",params[[p]],"\n",sep="")

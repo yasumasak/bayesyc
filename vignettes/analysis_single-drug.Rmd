@@ -47,7 +47,7 @@ Reads the input TSV and constructs a Manual_Input_Single object to standardize t
 df_input <- read.csv(file.path(params$dir_in, params$input_tsv), sep="\t", header=T, check.names=F, stringsAsFactors=F)
 
 # Print parameters
-out_params_ <- paste0(params$dir_out, "/params.",params$out_name,".csv")
+out_params_ <- paste0(params$dir_out, "/params.",params$out_name,".tsv")
 sink(out_params_)
 for(p in names(params)){
   cat(p,"\t",params[[p]],"\n",sep="")

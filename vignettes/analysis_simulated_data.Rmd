@@ -56,7 +56,7 @@ df_sim$specimen <- "ND"
 
 # Print parameters
 model <- basename(params$model_bayesyc)
-out_params_ <- file.path(params$dir_out, paste0("params.simulated_double.",params$data_type,".",params$s_y,".",params$sim_id,".",model,".csv"))
+out_params_ <- file.path(params$dir_out, paste0("params.simulated_double.",params$data_type,".",params$s_y,".",params$sim_id,".",model,".tsv"))
 sink(out_params_)
 for(p in names(params)){
   cat(p,"\t",params[[p]],"\n",sep="")
