@@ -65,7 +65,7 @@ Data_Handler_1 <- R6::R6Class("Data_Handler_1",  inherit = Data_Handler,
                         x_hat=median(df$conc), x_max=max(df$conc),
                         lb_log10_C=ifelse(is.null(params$lb_log10_C), -10, params$lb_log10_C),
                         ub_log10_C=ifelse(is.null(params$ub_log10_C), 6, params$ub_log10_C),
-                        E0=median(assay_data$v_hc), hc_med=median(v_hc),
+                        E0=median(v_hc), hc_med=median(v_hc),
                         N_new=length(xx), x_new=xx, df=df,
                         N_hc=length(v_hc), hc=v_hc,
                         N_lc=length(v_lc), lc=v_lc)

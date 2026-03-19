@@ -49,8 +49,8 @@ Manual_Input_Single <- R6::R6Class("Manual_Input_Single",
       # Low control
       df_lc <- df_single %>% dplyr::filter(is.na(specimen))
       
-      for(specimen in v_specimen){ 
-        df <- df_single %>% dplyr::filter(specimen == specimen, !is.na(y))
+      for(sp in v_specimen){ 
+        df <- df_single %>% dplyr::filter(specimen == sp, !is.na(y))
         # High control
         df_hc <- df %>% dplyr::filter(conc == 0)
         if(nrow(df_hc) == 0){
@@ -67,15 +67,15 @@ Manual_Input_Single <- R6::R6Class("Manual_Input_Single",
         
         # Store data
         assay_data <- Assay_Data$new(
-          list(specimen=specimen, analysis=specimen,
+          list(specimen=sp, analysis=sp,
                df_x=df_x, df_hc=df_hc, df_lc=df_lc, v_comp=v_comp,
                col_target=params$col_target,
                data_handler=Data_Handler_1$new())
         )
         
         self$ls_data <- c(self$ls_data, list(assay_data))
-        self$v_specimen <- c(self$v_specimen, specimen)
-        self$v_analysis <- c(self$v_analysis, specimen)
+        self$v_specimen <- c(self$v_specimen, sp)
+        self$v_analysis <- c(self$v_analysis, sp)
         v_compound <- c(v_compound, v_comp)
       }
       

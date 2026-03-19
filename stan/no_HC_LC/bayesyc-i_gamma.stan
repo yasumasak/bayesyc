@@ -31,7 +31,7 @@ functions{
 data{
   // Observed variables
   int<lower=0> Nc; // The number of data points for combination drug
-  array[Nc] real yc; // target cell count with combination drug
+  array[Nc] real yc; // target cell viability with combination drug
   array[Nc] real<lower=0> dc1; // Concentrations for drug1 in combination
   array[Nc] real<lower=0> dc2; // Concentrations for drug2 in combination
   
@@ -115,7 +115,7 @@ transformed parameters{
   beta2 = (E2 - E3)/(E0 - E2);
 
 
-  // Expected target cell count
+  // Expected target cell viability
   array[Nc] real<lower=0> uc;
   array[N1] real<lower=0> u1;
   array[N2] real<lower=0> u2;
@@ -176,7 +176,7 @@ model{
 
 generated quantities{
 
-  // Expected target cell count
+  // Expected target cell viability
   array[Nc_new] real<lower=0> uc_pred;
   real<lower=0> u_max;
 
